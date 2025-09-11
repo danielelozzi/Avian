@@ -9,7 +9,9 @@ L'applicazione utilizza un modello di deep learning in formato ONNX per la rilev
 - **Interfaccia Grafica Semplice**: Un'interfaccia utente intuitiva costruita con Tkinter per guidare l'utente attraverso il processo.
 - **Selezione Dinamica dei File**: Permette di selezionare facilmente l'immagine di input, il percorso di output e il modello di IA da utilizzare.
 - **Fasi di Analisi Configurabili**:
-  - **Preprocessing**: Isola automaticamente l'area di interesse circolare del campione sul vetrino, migliorando il contrasto e ritagliando l'immagine.
+  - **Preprocessing Modulare**: Offre passaggi opzionali che possono essere abilitati o disabilitati singolarmente:
+    - *Miglioramento del Contrasto*: Ottimizza il contrasto per rendere le cellule più distinguibili.
+    - *Isolamento e Ritaglio*: Rileva, isola e ritaglia l'area circolare del campione per focalizzare l'analisi.
   - **Conteggio Cellule**: Utilizza un modello ONNX per rilevare, classificare e contare le cellule (es. eritrociti, trombociti, linfociti).
 - **Output Multipli**:
   - **Immagine Annotata**: Salva una nuova immagine con i riquadri (bounding box) disegnati attorno alle cellule rilevate, etichettati con classe e confidenza.
@@ -51,6 +53,6 @@ Per eseguire l'applicazione, è necessario avere Python 3 installato e le seguen
     ```
 2.  **Seleziona l'Immagine di Input** tramite il pulsante "Sfoglia...".
 3.  **(Opzionale) Seleziona un Modello di IA** se vuoi usarne uno diverso da quello di default.
-4.  **Scegli le Fasi di Analisi** (Preprocessing e/o Conteggio).
+4.  **Scegli le Fasi di Analisi**: Abilita o disabilita il preprocessing e/o il conteggio. Se il preprocessing è attivo, puoi scegliere quali passaggi specifici (miglioramento contrasto, ritaglio) eseguire.
 5.  **Specifica il Percorso di Output** per l'immagine analizzata.
 6.  **Clicca su "Avvia Analisi"** e attendi il completamento. I risultati e i log appariranno nella finestra principale.

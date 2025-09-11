@@ -31,6 +31,8 @@ class App(tk.Tk):
         self.model_path = tk.StringVar(value="efficientNet_B0.onnx") # Modello di default
         self.do_preprocessing = tk.BooleanVar(value=True)
         self.do_counting = tk.BooleanVar(value=True)
+        self.do_contrast = tk.BooleanVar(value=True)
+        self.do_crop = tk.BooleanVar(value=True)
 
         # --- Layout ---
         main_frame = ttk.Frame(self, padding="10")
@@ -51,8 +53,21 @@ class App(tk.Tk):
         # Sezione Fasi di Analisi
         steps_frame = ttk.LabelFrame(main_frame, text="3. Seleziona Fasi di Analisi", padding="10")
         steps_frame.pack(fill="x", pady=5)
-        ttk.Checkbutton(steps_frame, text="Preprocessing (Isolamento campione)", variable=self.do_preprocessing).pack(anchor="w")
-        ttk.Checkbutton(steps_frame, text="Conteggio Cellule (Segmentazione e Bounding Box)", variable=self.do_counting).pack(anchor="w")
+
+        # Checkbox principale per il preprocessing
+        self.preproc_check = ttk.Checkbutton(steps_frame, text="Esegui Preprocessing", variable=self.do_preprocessing, command=self.toggle_preprocessing_options)
+        self.preproc_check.pack(anchor="w")
+
+        # Frame per le opzioni di preprocessing (indentate)
+        self.preproc_options_frame = ttk.Frame(steps_frame, padding=(20, 5, 0, 5))
+        self.preproc_options_frame.pack(fill="x", expand=True)
+        self.contrast_check = ttk.Checkbutton(self.preproc_options_frame, text="Migliora Contrasto", variable=self.do_contrast)
+        self.contrast_check.pack(anchor="w")
+        self.crop_check = ttk.Checkbutton(self.preproc_options_frame, text="Isola e Ritaglia Campione", variable=self.do_crop)
+        self.crop_check.pack(anchor="w")
+
+        # Checkbox per il conteggio
+        ttk.Checkbutton(steps_frame, text="Esegui Conteggio Cellule (Rilevamento e Classificazione)", variable=self.do_counting).pack(anchor="w", pady=(10, 0))
 
         # Sezione Output
         output_frame = ttk.LabelFrame(main_frame, text="4. Salva Immagine Risultato", padding="10")
@@ -95,6 +110,15 @@ class App(tk.Tk):
         if path:
             self.model_path.set(path)
 
+    def toggle_preprocessing_options(self):
+        # Abilita/disabilita le opzioni di preprocessing in base alla checkbox principale
+        if self.do_preprocessing.get():
+            self.contrast_check.config(state="normal")
+            self.crop_check.config(state="normal")
+        else:
+            self.contrast_check.config(state="disabled")
+            self.crop_check.config(state="disabled")
+
     def start_analysis_thread(self):
         # Esegue l'analisi in un thread separato per non bloccare la GUI
         self.run_button.config(state="disabled")
@@ -135,8 +159,12 @@ class App(tk.Tk):
             # Fase di Preprocessing
             if self.do_preprocessing.get():
                 self.log("2. Esecuzione del preprocessing...")
-                current_image = preprocess_image(current_image)
-                self.log("   -> Preprocessing completato.")
+                enhance = self.do_contrast.get()
+                crop = self.do_crop.get()
+                self.log(f"   - Migliora Contrasto: {'Sì' if enhance else 'No'}")
+                self.log(f"   - Isola e Ritaglia: {'Sì' if crop else 'No'}")
+                current_image = preprocess_image(current_image, enhance_contrast=enhance, isolate_and_crop=crop)
+                self.log("   -> Fase di preprocessing completata.")
             else:
                 self.log("2. Preprocessing saltato.")
 
