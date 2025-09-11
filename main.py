@@ -22,26 +22,13 @@ class App(tk.Tk):
         self.title("Avian - Analisi Immagini Vetrini")
         self.geometry("800x600")
 
-        # Carica il modello di IA all'avvio dell'app
-        try:
-            # Rileva il provider di esecuzione migliore per ONNX Runtime
-            import onnxruntime as ort
-            available_providers = ort.get_available_providers()
-            provider = 'CPUExecutionProvider' # Default
-            if 'CUDAExecutionProvider' in available_providers:
-                provider = 'CUDAExecutionProvider' # Usa NVIDIA GPU
-            elif 'DmlExecutionProvider' in available_providers:
-                provider = 'DmlExecutionProvider' # Usa DirectML su Windows (AMD/Intel GPU)
-
-            self.detector = CellDetector(provider=provider)
-        except Exception as e:
-            messagebox.showerror("Errore Modello", f"Impossibile caricare il modello ONNX. Assicurati che 'efficientNet_B0.onnx' sia nella cartella.\n\nDettagli: {e}")
-            self.destroy()
-            return
+        # Il modello di IA (self.detector) verrà caricato al momento dell'analisi
+        self.detector = None
 
         # Variabili di stato
         self.input_path = tk.StringVar()
         self.output_path = tk.StringVar()
+        self.model_path = tk.StringVar(value="efficientNet_B0.onnx") # Modello di default
         self.do_preprocessing = tk.BooleanVar(value=True)
         self.do_counting = tk.BooleanVar(value=True)
 
@@ -55,14 +42,20 @@ class App(tk.Tk):
         ttk.Entry(input_frame, textvariable=self.input_path).pack(side="left", fill="x", expand=True, padx=(0, 5))
         ttk.Button(input_frame, text="Sfoglia...", command=self.browse_input).pack(side="left")
 
+        # Sezione Modello
+        model_frame = ttk.LabelFrame(main_frame, text="2. Seleziona Modello di IA", padding="10")
+        model_frame.pack(fill="x", pady=5)
+        ttk.Entry(model_frame, textvariable=self.model_path).pack(side="left", fill="x", expand=True, padx=(0, 5))
+        ttk.Button(model_frame, text="Sfoglia...", command=self.browse_model).pack(side="left")
+
         # Sezione Fasi di Analisi
-        steps_frame = ttk.LabelFrame(main_frame, text="2. Seleziona Fasi di Analisi", padding="10")
+        steps_frame = ttk.LabelFrame(main_frame, text="3. Seleziona Fasi di Analisi", padding="10")
         steps_frame.pack(fill="x", pady=5)
         ttk.Checkbutton(steps_frame, text="Preprocessing (Isolamento campione)", variable=self.do_preprocessing).pack(anchor="w")
         ttk.Checkbutton(steps_frame, text="Conteggio Cellule (Segmentazione e Bounding Box)", variable=self.do_counting).pack(anchor="w")
 
         # Sezione Output
-        output_frame = ttk.LabelFrame(main_frame, text="3. Salva Immagine Risultato", padding="10")
+        output_frame = ttk.LabelFrame(main_frame, text="4. Salva Immagine Risultato", padding="10")
         output_frame.pack(fill="x", pady=5)
         ttk.Entry(output_frame, textvariable=self.output_path).pack(side="left", fill="x", expand=True, padx=(0, 5))
         ttk.Button(output_frame, text="Salva come...", command=self.browse_output).pack(side="left")
@@ -97,6 +90,11 @@ class App(tk.Tk):
         if path:
             self.output_path.set(path)
 
+    def browse_model(self):
+        path = filedialog.askopenfilename(title="Seleziona il modello ONNX", filetypes=[("ONNX Model", "*.onnx")])
+        if path:
+            self.model_path.set(path)
+
     def start_analysis_thread(self):
         # Esegue l'analisi in un thread separato per non bloccare la GUI
         self.run_button.config(state="disabled")
@@ -107,13 +105,30 @@ class App(tk.Tk):
     def run_analysis(self):
         input_p = self.input_path.get()
         output_p = self.output_path.get()
+        model_p = self.model_path.get()
 
-        if not input_p or not output_p:
-            messagebox.showerror("Errore", "Seleziona un file di input e un percorso di output.")
+        if not all([input_p, output_p, model_p]):
+            messagebox.showerror("Errore", "Assicurati di aver selezionato un file di input, un modello e un percorso di output.")
             self.run_button.config(state="normal")
             return
 
         try:
+            # Carica il modello di IA qui, al momento dell'analisi
+            self.log(f"Caricamento modello da: {os.path.basename(model_p)}")
+            try:
+                import onnxruntime as ort
+                available_providers = ort.get_available_providers()
+                provider = 'CPUExecutionProvider' # Default
+                if 'CUDAExecutionProvider' in available_providers:
+                    provider = 'CUDAExecutionProvider' # Usa NVIDIA GPU
+                elif 'DmlExecutionProvider' in available_providers:
+                    provider = 'DmlExecutionProvider' # Usa DirectML su Windows
+                self.detector = CellDetector(model_path=model_p, provider=provider)
+            except Exception as e:
+                self.log(f"ERRORE: Impossibile caricare il modello ONNX.\n{e}")
+                messagebox.showerror("Errore Modello", f"Impossibile caricare il modello ONNX.\n\nDettagli: {e}")
+                raise
+
             self.log(f"1. Caricamento immagine da: {os.path.basename(input_p)}")
             current_image = np.array(Image.open(input_p))
 
@@ -156,7 +171,7 @@ class App(tk.Tk):
             self.log(f"ERRORE: File non trovato: {input_p}")
         except Exception as e:
             messagebox.showerror("Errore", f"Si è verificato un errore: {e}")
-            self.log(f"ERRORE: {e}")
+            # L'errore specifico viene già loggato dove si verifica
         finally:
             self.run_button.config(state="normal")
 
