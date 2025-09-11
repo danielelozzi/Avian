@@ -5,8 +5,10 @@ import numpy as np
 import pandas as pd
 import skimage
 from skimage.measure import regionprops_table, label
-from skimage.exposure import rescale_intensity
-from skimage.filters import threshold_multiotsu
+from skimage.exposure import rescale_intensity, equalize_adapthist
+from skimage.filters import threshold_otsu
+from PIL import Image
+import matplotlib.pyplot as plt
 
 
 def create_circular_mask(h, w, center=None, radius=None):
@@ -48,15 +50,17 @@ def preprocess_image(image_array: np.ndarray) -> np.ndarray:
     if image_array.shape[-1] == 4:
         image_array = image_array[:, :, 0:3]
 
-    # 2. Miglioramento del contrasto basato sul canale rosso
+    # 2. Miglioramento del contrasto usando multi-otsu a 3 classi per definire i limiti.
+    #    È un compromesso efficiente che si adatta all'immagine.
     red_channel = image_array[:, :, 0]
-    multi_threshold_0 = threshold_multiotsu(red_channel, classes=6)
-    cell_exposed = rescale_intensity(image_array, in_range=(multi_threshold_0[0], multi_threshold_0[-1]))
+    thresholds = skimage.filters.threshold_multiotsu(red_channel, classes=3)
+    p_low, p_high = thresholds[0], thresholds[1]
+    cell_exposed = rescale_intensity(image_array, in_range=(p_low, p_high))
 
-    # 3. Identificazione dell'area del vetrino (background)
+    # 3. Identificazione dell'area del vetrino usando threshold_otsu (più veloce)
     red_exposed = cell_exposed[:, :, 0]
-    multi_threshold_1 = threshold_multiotsu(red_exposed, classes=6)
-    binary_red_exposed = red_exposed < multi_threshold_1[0]
+    thresh = threshold_otsu(red_exposed)
+    binary_red_exposed = red_exposed < thresh
     label_bg = label(binary_red_exposed, background=True)
     props = regionprops_table(label_bg, properties=('centroid', 'axis_major_length', 'bbox', 'area', 'eccentricity'))
     df = pd.DataFrame(props).loc[lambda d: d.area > 10000].sort_values('eccentricity')
