@@ -28,6 +28,7 @@ Per eseguire l'applicazione e i relativi script di addestramento, si consiglia d
 
 2.  **Installa Conda**:
     Se non hai Conda, puoi installare [Miniconda](https://docs.conda.io/en/latest/miniconda.html) (una versione minimale di Anaconda). Scegli l'installer appropriato per il tuo sistema operativo e segui le istruzioni.
+    Se hai un pc Windows o Linux con nVIDIA, installa CUDA [link](https://developer.nvidia.com/cuda-downloads)
 
 3.  **Crea e attiva l'ambiente Conda**:
     Crea un nuovo ambiente virtuale (es. chiamato `avian_env`) con una versione di Python compatibile (es. 3.9) e attivalo.
