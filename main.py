@@ -4,13 +4,13 @@
 import json
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+from ultralytics import YOLO
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 import os
 import threading
-# Importa le funzioni di analisi dai moduli specifici
-from cell_preprocessing import preprocess_image
-from cell_detector import CellDetector
+import cv2
+import datetime
 
 
 class App(tk.Tk):
@@ -21,18 +21,15 @@ class App(tk.Tk):
         super().__init__()
         self.title("Avian - Analisi Immagini Vetrini")
         self.geometry("800x600")
-
-        # Il modello di IA (self.detector) verrà caricato al momento dell'analisi
-        self.detector = None
-
+ 
+        self.model = None
+ 
         # Variabili di stato
         self.input_path = tk.StringVar()
         self.output_path = tk.StringVar()
-        self.model_path = tk.StringVar(value="efficientNet_B0.onnx") # Modello di default
-        self.do_preprocessing = tk.BooleanVar(value=True)
+        self.model_path = tk.StringVar(value="yolov8_seg.pt") # Modello di default
+        self.do_preprocessing = tk.BooleanVar(value=False) # YOLO fa già il suo preprocessing
         self.do_counting = tk.BooleanVar(value=True)
-        self.do_contrast = tk.BooleanVar(value=True)
-        self.do_crop = tk.BooleanVar(value=True)
 
         # --- Layout ---
         main_frame = ttk.Frame(self, padding="10")
@@ -54,17 +51,8 @@ class App(tk.Tk):
         steps_frame = ttk.LabelFrame(main_frame, text="3. Seleziona Fasi di Analisi", padding="10")
         steps_frame.pack(fill="x", pady=5)
 
-        # Checkbox principale per il preprocessing
-        self.preproc_check = ttk.Checkbutton(steps_frame, text="Esegui Preprocessing", variable=self.do_preprocessing, command=self.toggle_preprocessing_options)
+        self.preproc_check = ttk.Checkbutton(steps_frame, text="Esegui Preprocessing (Opzionale, non richiesto da YOLO)", variable=self.do_preprocessing)
         self.preproc_check.pack(anchor="w")
-
-        # Frame per le opzioni di preprocessing (indentate)
-        self.preproc_options_frame = ttk.Frame(steps_frame, padding=(20, 5, 0, 5))
-        self.preproc_options_frame.pack(fill="x", expand=True)
-        self.contrast_check = ttk.Checkbutton(self.preproc_options_frame, text="Migliora Contrasto", variable=self.do_contrast)
-        self.contrast_check.pack(anchor="w")
-        self.crop_check = ttk.Checkbutton(self.preproc_options_frame, text="Isola e Ritaglia Campione", variable=self.do_crop)
-        self.crop_check.pack(anchor="w")
 
         # Checkbox per il conteggio
         ttk.Checkbutton(steps_frame, text="Esegui Conteggio Cellule (Rilevamento e Classificazione)", variable=self.do_counting).pack(anchor="w", pady=(10, 0))
@@ -93,7 +81,7 @@ class App(tk.Tk):
         self.update_idletasks()
 
     def browse_input(self):
-        path = filedialog.askopenfilename(filetypes=[("Image Files", "*.jpg *.jpeg *.png *.tif *.heic")])
+        path = filedialog.askopenfilename(filetypes=[("Image Files", "*.jpg *.jpeg *.png *.tif")])
         if path:
             self.input_path.set(path)
             # Propone un nome di output di default
@@ -106,18 +94,9 @@ class App(tk.Tk):
             self.output_path.set(path)
 
     def browse_model(self):
-        path = filedialog.askopenfilename(title="Seleziona il modello ONNX", filetypes=[("ONNX Model", "*.onnx")])
+        path = filedialog.askopenfilename(title="Seleziona il modello YOLOv8", filetypes=[("PyTorch Model", "*.pt")])
         if path:
             self.model_path.set(path)
-
-    def toggle_preprocessing_options(self):
-        # Abilita/disabilita le opzioni di preprocessing in base alla checkbox principale
-        if self.do_preprocessing.get():
-            self.contrast_check.config(state="normal")
-            self.crop_check.config(state="normal")
-        else:
-            self.contrast_check.config(state="disabled")
-            self.crop_check.config(state="disabled")
 
     def start_analysis_thread(self):
         # Esegue l'analisi in un thread separato per non bloccare la GUI
@@ -125,6 +104,31 @@ class App(tk.Tk):
         self.log("--- Avvio analisi ---")
         thread = threading.Thread(target=self.run_analysis)
         thread.start()
+
+    def _create_coco_output(self, results, class_names):
+        original_h, original_w = results.orig_shape
+        coco_output = {
+            "info": {"description": "Avian Cell Annotations (YOLOv8)", "version": "1.0", "date_created": datetime.date.today().isoformat()},
+            "licenses": [{"id": 1, "name": "N/A", "url": ""}],
+            "images": [{"id": 1, "width": original_w, "height": original_h, "file_name": "image.png", "license": 1}],
+            "annotations": [],
+            "categories": [{"id": i, "name": name, "supercategory": "cell"} for i, name in class_names.items()]
+        }
+        
+        annotation_id = 1
+        for box, mask, cls_id, conf in zip(results.boxes.xywh.cpu().numpy(), results.masks.xy, results.boxes.cls.cpu().numpy(), results.boxes.conf.cpu().numpy()):
+            x_center, y_center, w, h = box
+            x1 = x_center - w / 2
+            y1 = y_center - h / 2
+            
+            coco_annotation = {
+                "id": annotation_id, "image_id": 1, "category_id": int(cls_id),
+                "bbox": [x1, y1, w, h], "area": w * h,
+                "segmentation": [mask.flatten().tolist()], "iscrowd": 0, "score": float(conf)
+            }
+            coco_output["annotations"].append(coco_annotation)
+            annotation_id += 1
+        return coco_output
 
     def run_analysis(self):
         input_p = self.input_path.get()
@@ -137,48 +141,45 @@ class App(tk.Tk):
             return
 
         try:
-            # Carica il modello di IA qui, al momento dell'analisi
             self.log(f"Caricamento modello da: {os.path.basename(model_p)}")
             try:
-                import onnxruntime as ort
-                available_providers = ort.get_available_providers()
-                provider = 'CPUExecutionProvider' # Default
-                if 'CUDAExecutionProvider' in available_providers:
-                    provider = 'CUDAExecutionProvider' # Usa NVIDIA GPU
-                elif 'DmlExecutionProvider' in available_providers:
-                    provider = 'DmlExecutionProvider' # Usa DirectML su Windows
-                self.detector = CellDetector(model_path=model_p, provider=provider)
+                self.model = YOLO(model_p)
+                self.log(f"Modello caricato. Device: {self.model.device}")
             except Exception as e:
-                self.log(f"ERRORE: Impossibile caricare il modello ONNX.\n{e}")
-                messagebox.showerror("Errore Modello", f"Impossibile caricare il modello ONNX.\n\nDettagli: {e}")
+                self.log(f"ERRORE: Impossibile caricare il modello YOLO.\n{e}")
+                messagebox.showerror("Errore Modello", f"Impossibile caricare il modello.\n\nDettagli: {e}")
                 raise
 
             self.log(f"1. Caricamento immagine da: {os.path.basename(input_p)}")
-            current_image = np.array(Image.open(input_p))
+            # YOLO si aspetta il percorso del file o un array numpy
+            # Passare il percorso è più efficiente
 
             # Fase di Preprocessing
             if self.do_preprocessing.get():
-                self.log("2. Esecuzione del preprocessing...")
-                enhance = self.do_contrast.get()
-                crop = self.do_crop.get()
-                self.log(f"   - Migliora Contrasto: {'Sì' if enhance else 'No'}")
-                self.log(f"   - Isola e Ritaglia: {'Sì' if crop else 'No'}")
-                current_image = preprocess_image(current_image, enhance_contrast=enhance, isolate_and_crop=crop)
-                self.log("   -> Fase di preprocessing completata.")
+                self.log("2. Esecuzione del preprocessing (non implementato per YOLO)...")
+                # Qui potrebbe essere inserito un preprocessing custom se necessario
+                # Per ora, lo saltiamo dato che YOLO lo gestisce internamente.
             else:
                 self.log("2. Preprocessing saltato.")
 
             # Fase di Conteggio
             if self.do_counting.get():
-                self.log(f"3. Esecuzione conteggio (provider: {self.detector.session.get_providers()[0]})...")
-                current_image, coco_data = self.detector.detect(current_image)
-                counts = coco_data.pop('summary_counts', {})  # Rimuove il conteggio custom e lo salva
+                self.log(f"3. Esecuzione rilevamento e conteggio...")
+                results = self.model.predict(source=input_p, conf=0.25, save=False)
+                
+                # Ottieni l'immagine con le annotazioni
+                annotated_image_bgr = results[0].plot() # Restituisce un array BGR
+                annotated_image_rgb = cv2.cvtColor(annotated_image_bgr, cv2.COLOR_BGR2RGB)
+
+                # Conta le cellule per classe
+                class_ids = results[0].boxes.cls.cpu().numpy().astype(int)
+                class_names = self.model.names
+                counts = {class_names[cid]: np.count_nonzero(class_ids == cid) for cid in np.unique(class_ids)}
                 self.log(f"   -> Conteggio completato. Risultati: {counts}")
 
                 # Salva il file JSON
                 json_path = os.path.splitext(output_p)[0] + ".json"
-
-                # Aggiorna il nome del file nell'output COCO
+                coco_data = self._create_coco_output(results[0], class_names)
                 coco_data['images'][0]['file_name'] = os.path.basename(output_p)
 
                 with open(json_path, 'w') as f:
@@ -186,10 +187,12 @@ class App(tk.Tk):
                 self.log(f"   -> Annotazioni salvate in: {os.path.basename(json_path)}")
             else:
                 self.log("3. Conteggio cellule saltato.")
+                # Se il conteggio è saltato, carica l'immagine originale per il salvataggio
+                annotated_image_rgb = np.array(Image.open(input_p))
 
             # Salvataggio
             self.log(f"4. Salvataggio immagine risultato in: {os.path.basename(output_p)}")
-            Image.fromarray(current_image).save(output_p, 'PNG')
+            Image.fromarray(annotated_image_rgb).save(output_p, 'PNG')
 
             self.log("\n--- Analisi completata con successo! ---")
             messagebox.showinfo("Successo", "L'analisi è stata completata con successo!")
