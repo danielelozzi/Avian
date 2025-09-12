@@ -1,5 +1,6 @@
 from ultralytics import YOLO
 import torch
+import os
 
 def train_model():
     """
@@ -22,6 +23,12 @@ def train_model():
         batch=8,
         name='yolov8n_avian_blood_seg' # Nome della cartella per i risultati
     )
+    
+    # Esporta il modello nel formato .pt
+    # Il modello migliore viene salvato automaticamente come 'best.pt' nella cartella dei risultati.
+    # Qui lo esportiamo con un nome specifico.
+    model.export(format='pt', file='yolov8nseg_avian.pt')
+    print(f"\nModello salvato come 'yolov8nseg_avian.pt' nella directory corrente.")
 
 if __name__ == '__main__':
     train_model()
