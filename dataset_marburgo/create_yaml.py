@@ -8,7 +8,7 @@ def create_yolo_yaml():
     """
     # The path should be relative to the 'dataset_marburgo' directory
     # where the script is run.
-    dataset_path = Path('./avian_yolo_dataset').resolve()
+    dataset_path = Path('../avian_yolo_dataset')
 
     train_coco_path = Path('./dataset_segmentation/train.json')
 
