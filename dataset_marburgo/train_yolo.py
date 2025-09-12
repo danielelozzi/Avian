@@ -27,7 +27,7 @@ def train_model():
     # Esporta il modello nel formato .pt
     # Il modello migliore viene salvato automaticamente come 'best.pt' nella cartella dei risultati.
     # Qui lo esportiamo con un nome specifico.
-    model.export(format='pt', file='yolov8nseg_avian.pt')
+    model.export(format='pt', name='yolov8nseg_avian.pt')
     print(f"\nModello salvato come 'yolov8nseg_avian.pt' nella directory corrente.")
 
 if __name__ == '__main__':
