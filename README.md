@@ -2,7 +2,7 @@
 
 **Avian** è un'applicazione desktop sviluppata in Python per l'analisi di immagini di campioni biologici su vetrini, con un focus specifico sul conteggio e la segmentazione di cellule ematiche aviarie.
 
-L'applicazione utilizza un modello di deep learning **YOLOv8-seg** per la segmentazione delle cellule e offre un'interfaccia grafica semplice per automatizzare il processo di analisi.
+L'applicazione utilizza un modello di deep learning [YOLOv8-seg](https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n-seg.pt) per la segmentazione delle cellule e offre un'interfaccia grafica semplice per automatizzare il processo di analisi.
 
 ## Funzionalità
 
@@ -22,7 +22,7 @@ Per eseguire l'applicazione e i relativi script di addestramento, si consiglia d
 
 1.  **Clona il repository**:
     ```bash
-    git clone https://github.com/daniele-gregorio/Avian.git
+    git clone https://github.com/danielelozzi/avian.git
     cd Avian
     ```
 
@@ -59,7 +59,7 @@ Per eseguire l'applicazione e i relativi script di addestramento, si consiglia d
 
 ## Addestramento Modello (Opzionale)
 
-La cartella `dataset marburgo` contiene gli script necessari per addestrare un modello di segmentazione YOLOv8 personalizzato. Per procedere, segui questi passaggi nella sequenza corretta.
+La cartella (dataset marburgo)[https://data.uni-marburg.de/entities/dataset/c78489de-e08c-4818-800b-1f182aa2e631] contiene gli script necessari per addestrare un modello di segmentazione YOLOv8 personalizzato. Per procedere, segui questi passaggi nella sequenza corretta.
 
 1.  **Prepara la struttura delle cartelle**:
     Prima di eseguire qualsiasi script, organizza il tuo dataset. All'interno della cartella `dataset marburgo`, crea una sottocartella chiamata `dataset_segmentation`. Questa cartella deve contenere le immagini e le etichette (in formato YOLO) suddivise in `train`, `val` e (opzionalmente) `test`.
