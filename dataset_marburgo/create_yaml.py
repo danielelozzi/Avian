@@ -6,9 +6,9 @@ def create_yolo_yaml():
     """
     Crea il file YAML di configurazione per il training con YOLO.
     """
-    # Il path deve puntare alla cartella di output creata da prepare_dataset.py
-    # Non alla cartella sorgente.
-    dataset_path = Path('./dataset_marburgo').resolve()
+    # The path should be relative to the 'dataset_marburgo' directory
+    # where the script is run.
+    dataset_path = Path('./avian_yolo_dataset').resolve()
 
     train_coco_path = Path('./dataset_segmentation/train.json')
 
@@ -19,6 +19,7 @@ def create_yolo_yaml():
     categories = sorted(coco_data['categories'], key=lambda x: x['id'])
     class_names = [cat['name'] for cat in categories]
 
+    # Use paths relative to the project structure
     yaml_data = {
         'path': str(dataset_path),
         'train': 'images/train',
@@ -27,6 +28,7 @@ def create_yolo_yaml():
         'names': {i: name for i, name in enumerate(class_names)}
     }
 
+    # Save the YAML file inside the dataset_marburgo directory
     with open('avian_blood_cells.yaml', 'w') as f:
         yaml.dump(yaml_data, f, sort_keys=False, default_flow_style=False)
     
