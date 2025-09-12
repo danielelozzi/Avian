@@ -18,28 +18,32 @@ L'applicazione utilizza un modello di deep learning **YOLOv8-seg** per la segmen
 
 ## Installazione
 
-Per eseguire l'applicazione, è necessario avere Python 3 installato e le seguenti librerie.
+Per eseguire l'applicazione e i relativi script di addestramento, si consiglia di utilizzare un ambiente virtuale per gestire le dipendenze. Di seguito sono riportate le istruzioni per l'installazione tramite **Conda**.
 
 1.  **Clona il repository**:
     ```bash
-    git clone <URL-del-tuo-repository>
-    cd <nome-cartella-repository>
+    git clone https://github.com/daniele-gregorio/Avian.git
+    cd Avian
     ```
 
-2.  **Installa le dipendenze**:
-    Si consiglia di utilizzare un ambiente virtuale.
+2.  **Installa Conda**:
+    Se non hai Conda, puoi installare [Miniconda](https://docs.conda.io/en/latest/miniconda.html) (una versione minimale di Anaconda). Scegli l'installer appropriato per il tuo sistema operativo e segui le istruzioni.
+
+3.  **Crea e attiva l'ambiente Conda**:
+    Crea un nuovo ambiente virtuale (es. chiamato `avian_env`) con una versione di Python compatibile (es. 3.9) e attivalo.
     ```bash
-    python -m venv venv
-    source venv/bin/activate  # Su Windows: venv\Scripts\activate
+    conda create --name avian_env python=3.9
+    conda activate avian_env
     ```
-    Installa i pacchetti richiesti:
+
+4.  **Installa le dipendenze**:
+    Con l'ambiente attivo, installa i pacchetti Python necessari tramite `pip`.
     ```bash
     pip install numpy Pillow ultralytics opencv-python
     ```
 
-3.  **Scarica il modello**:
+5.  **Scarica il modello pre-addestrato**:
     Assicurati che il file del modello YOLOv8 (es. `yolov8_seg.pt`) sia presente nella stessa cartella dello script `main.py`, oppure selezionalo tramite l'interfaccia.
-    Puoi addestrare un modello personalizzato usando gli script nella cartella `dataset marburgo`.
 
 ## Utilizzo
 
@@ -55,19 +59,35 @@ Per eseguire l'applicazione, è necessario avere Python 3 installato e le seguen
 
 ## Addestramento Modello (Opzionale)
 
-Nella cartella `dataset marburgo` sono presenti gli script per preparare il dataset e addestrare il modello YOLOv8 per la segmentazione.
+La cartella `dataset marburgo` contiene gli script necessari per addestrare un modello di segmentazione YOLOv8 personalizzato. Per procedere, segui questi passaggi nella sequenza corretta.
 
-1.  **Prepara il dataset**:
+1.  **Prepara la struttura delle cartelle**:
+    Prima di eseguire qualsiasi script, organizza il tuo dataset. All'interno della cartella `dataset marburgo`, crea una sottocartella chiamata `dataset_segmentation`. Questa cartella deve contenere le immagini e le etichette (in formato YOLO) suddivise in `train`, `val` e (opzionalmente) `test`.
+
+    La struttura finale dovrà essere simile a questa:
+    ```
+    Avian/
+    └── dataset marburgo/
+        ├── dataset_segmentation/
+        │   ├── images/
+        │   │   ├── train/
+        │   │   └── val/
+        │   └── labels/
+        │       ├── train/
+        │       └── val/
+        ├── prepare_dataset.py
+        ├── create_yaml.py
+        └── train_yolo.py
+    ```
+
+2.  **Esegui gli script di preparazione e addestramento**:
+    Assicurati che il tuo ambiente Conda (`avian_env`) sia attivo. Posizionati nella cartella `dataset marburgo` ed esegui gli script in questa sequenza:
     ```bash
     cd "dataset marburgo"
-    python prepare_dataset.py
+    python prepare_dataset.py  # Prepara i file di configurazione del dataset
+    python create_yaml.py      # Crea il file .yaml per l'addestramento di YOLO
+    python train_yolo.py       # Avvia l'addestramento del modello
     ```
-2.  **Crea il file di configurazione YAML**:
-    ```bash
-    python create_yaml.py
-    ```
-3.  **Avvia l'addestramento**:
-    ```bash
-    python train_yolo.py
-    ```
-Il modello addestrato (`best.pt`) si troverà nella cartella `runs/segment/yolov8n_avian_blood_seg/weights/`.
+
+3.  **Trova il modello addestrato**:
+    Al termine dell'addestramento, il modello migliore (`best.pt`) e altri artefatti saranno salvati in una sottocartella all'interno di `runs/segment/`, ad esempio `runs/segment/yolov8n_avian_blood_seg/weights/`. Potrai quindi utilizzare questo modello nell'applicazione principale.
