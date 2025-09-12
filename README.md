@@ -34,12 +34,13 @@ Per eseguire l'applicazione e i relativi script di addestramento, si consiglia d
     ```bash
     conda create --name avian_env python=3.9
     conda activate avian_env
+    conda install pip
     ```
 
 4.  **Installa le dipendenze**:
     Con l'ambiente attivo, installa i pacchetti Python necessari tramite `pip`.
     ```bash
-    pip install numpy Pillow ultralytics opencv-python
+    pip install -r requirements.txt
     ```
 
 5.  **Scarica il modello pre-addestrato**:
