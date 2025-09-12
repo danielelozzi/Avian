@@ -59,7 +59,7 @@ Per eseguire l'applicazione e i relativi script di addestramento, si consiglia d
 
 ## Addestramento Modello (Opzionale)
 
-La cartella (dataset marburgo)[https://data.uni-marburg.de/entities/dataset/c78489de-e08c-4818-800b-1f182aa2e631] contiene gli script necessari per addestrare un modello di segmentazione YOLOv8 personalizzato. Per procedere, segui questi passaggi nella sequenza corretta.
+La cartella [dataset marburgo](https://data.uni-marburg.de/entities/dataset/c78489de-e08c-4818-800b-1f182aa2e631) contiene gli script necessari per addestrare un modello di segmentazione YOLOv8 personalizzato. Per procedere, segui questi passaggi nella sequenza corretta.
 
 1.  **Prepara la struttura delle cartelle**:
     Prima di eseguire qualsiasi script, organizza il tuo dataset. All'interno della cartella `dataset marburgo`, crea una sottocartella chiamata `dataset_segmentation`. Questa cartella deve contenere le immagini e le etichette (in formato YOLO) suddivise in `train`, `val` e (opzionalmente) `test`.
