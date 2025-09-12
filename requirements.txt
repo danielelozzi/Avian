@@ -1,0 +1,10 @@
+numpy
+pandas
+scikit-image
+Pillow
+onnxruntime
+matplotlib
+scipy
+pillow-heif
+
+# Per il supporto a GPU NVIDIA, sostituisci 'onnxruntime' con 'onnxruntime-gpu'
