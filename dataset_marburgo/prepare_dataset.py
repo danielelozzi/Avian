@@ -11,7 +11,7 @@ from pycocotools import mask as mask_util # <-- NUOVA IMPORTAZIONE
 import cv2 # <-- NUOVA IMPORTAZIONE
 
 # --- PARAMETRI DI CONFIGURAZIONE ---
-DATASET_FRACTION = 0.2
+DATASET_FRACTION = 1
 TRAIN_SIZE = 0.8
 VAL_SIZE = 0.1
 TEST_SIZE = 0.1

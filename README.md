@@ -89,5 +89,33 @@ La cartella del dataset, contiene gli script necessari per addestrare un modello
     python train_yolo.py       # Avvia l'addestramento del modello
     ```
 
-3.  **Trova il modello addestrato**:
-    Al termine dell'addestramento, il modello migliore (`best.pt`) e altri artefatti saranno salvati in una sottocartella all'interno di `runs/segment/`, ad esempio `runs/segment/yolov8n_avian_blood_seg/weights/`. Potrai quindi utilizzare questo modello nell'applicazione principale.
+3.  **Trova e utilizza il modello addestrato**:
+    Al termine dell'addestramento, lo script `train_yolo.py` salverà due versioni del modello:
+    -   `runs/segment/yolov8n_avian_blood_seg/weights/best.pt`: Il modello con le migliori performance sul set di validazione.
+    -   `yolov8nseg_avian.pt`: Una copia del modello migliore, salvata nella cartella principale del progetto per un accesso più comodo.
+
+    Puoi utilizzare il file `yolov8nseg_avian.pt` direttamente nell'applicazione principale, selezionandolo tramite l'interfaccia grafica.
+
+4.  **Valuta le performance del modello (Opzionale ma consigliato)**:
+    Per ottenere metriche di accuratezza quantitative (come Precision, Recall, mAP, IoU) sul set di test, esegui lo script di valutazione:
+    ```bash
+    # Sempre dalla cartella "dataset marburgo"
+    python evaluate_model.py
+    ```
+    Questo script caricherà il modello `yolov8nseg_avian.pt` e calcolerà le sue performance sul set di dati di test, fornendo una valutazione oggettiva della sua efficacia nella segmentazione.
+
+### Spiegazione delle Metriche di Valutazione
+
+Lo script `evaluate_model.py` (e il processo di validazione durante l'addestramento) utilizza metriche standard per valutare le performance del modello di segmentazione. Ecco una breve spiegazione delle più importanti:
+
+-   **Intersection over Union (IoU)**: È la metrica fondamentale per la segmentazione. Misura la sovrapposizione tra la maschera predetta dal modello e la maschera reale (ground truth). Viene calcolata come `(Area di Intersezione) / (Area di Unione)`. Un valore di 1.0 indica una sovrapposizione perfetta.
+
+-   **Precision (P)**: Indica la precisione delle predizioni. Risponde alla domanda: "Di tutte le cellule che il modello ha identificato, quante erano corrette?". Un valore alto significa che il modello ha pochi falsi positivi.
+
+-   **Recall (R)**: Indica la capacità del modello di trovare tutte le cellule rilevanti. Risponde alla domanda: "Di tutte le cellule realmente presenti nell'immagine, quante ne ha trovate il modello?". Un valore alto significa che il modello ha pochi falsi negativi (non ha "mancato" molte cellule).
+
+-   **mAP50 (mean Average Precision @ 50%)**: È una delle metriche principali per giudicare un modello. Rappresenta la media della precisione calcolata con una soglia di IoU del 50%. In pratica, se la sovrapposizione (IoU) tra la predizione e la maschera reale è superiore al 50%, la predizione è considerata un successo. Un valore più vicino a 1.0 è migliore.
+
+-   **mAP50-95 (mean Average Precision @ 50-95%)**: È una metrica più severa e completa. È la media delle performance (mAP) calcolata su diverse soglie di IoU, dal 50% al 95%. Un punteggio alto qui indica che il modello non solo trova le cellule, ma le segmenta anche con un contorno molto preciso.
+
+Queste metriche vengono calcolate sia per i riquadri (`Box`) che per le maschere di segmentazione (`Mask`). Per questo progetto, le metriche relative alla **maschera** sono le più importanti.
