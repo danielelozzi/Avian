@@ -359,6 +359,7 @@ class App(tk.Tk):
                                 # Upscaling del tile alla dimensione attesa dal modello
                                 upscaled_tile = cv2.resize(tile, (model_input_size, model_input_size), interpolation=cv2.INTER_CUBIC)
                                 images_to_process.append(upscaled_tile)
+                                tile_coords.append((x, y)) # <-- Aggiungi questa riga
                                 num_tiles += 1
                         self.log(f"   -> Immagine suddivisa in {num_tiles} tasselli.")
                 else:
@@ -374,31 +375,43 @@ class App(tk.Tk):
                     # Prepara un oggetto Results vuoto per accumulare i risultati
                     # Usiamo il primo risultato come template
                     final_results = all_raw_results[0].cpu()
+                    final_results.orig_shape = original_image_rgb.shape[:2] # Imposta la dimensione dell'immagine grande
                     final_results.boxes = None
                     final_results.masks = None
+
+                    first_valid_result = next((r for r in all_raw_results if r.boxes is not None), None)
 
                     all_boxes, all_masks, all_cls, all_conf = [], [], [], []
 
                     for i, result in enumerate(all_raw_results):
                         if result.boxes is None or len(result.boxes) == 0:
                             continue
-                        
+
                         x_offset, y_offset = tile_coords[i]
                         
                         # Calcola il fattore di scala inverso per rimappare le coordinate
-                        # dal tile 640x640 al tile originale
-                        tile_h_orig, tile_w_orig = images_to_process[i].shape[:2] # Dimensione del tile upscalato (es. 640x640)
-                        orig_tile_size_w = int(tile_w_orig / scaling_factor)
-                        orig_tile_size_h = int(tile_h_orig / scaling_factor)
+                        # dal tile upscalato (es. 640x640) al tile originale.
+                        # La dimensione del tile originale è tile_size x tile_size
+                        model_input_w, model_input_h = result.orig_shape
+                        
+                        # La dimensione effettiva del tile estratto dall'immagine originale
+                        # Questo è importante per i tasselli ai bordi che possono essere più piccoli
+                        y_end = min(y_offset + int(model_input_h / scaling_factor), original_image_rgb.shape[0])
+                        x_end = min(x_offset + int(model_input_w / scaling_factor), original_image_rgb.shape[1])
+                        orig_tile_h = y_end - y_offset
+                        orig_tile_w = x_end - x_offset
 
                         # Clona i box per non modificare l'originale
                         remapped_boxes = result.boxes.xyxy.cpu().clone()
 
                         # Rimappa le coordinate dei box
-                        remapped_boxes[:, 0] = x_offset + (remapped_boxes[:, 0] / tile_w_orig) * orig_tile_size_w
-                        remapped_boxes[:, 1] = y_offset + (remapped_boxes[:, 1] / tile_h_orig) * orig_tile_size_h
-                        remapped_boxes[:, 2] = x_offset + (remapped_boxes[:, 2] / tile_w_orig) * orig_tile_size_w
-                        remapped_boxes[:, 3] = y_offset + (remapped_boxes[:, 3] / tile_h_orig) * orig_tile_size_h
+                        # 1. Normalizza la coordinata rispetto alla dimensione del tile upscalato (es. 640)
+                        # 2. Moltiplica per la dimensione reale del tile originale
+                        # 3. Aggiungi l'offset del tile nell'immagine grande
+                        remapped_boxes[:, 0] = x_offset + (remapped_boxes[:, 0] / model_input_w) * orig_tile_w
+                        remapped_boxes[:, 1] = y_offset + (remapped_boxes[:, 1] / model_input_h) * orig_tile_h
+                        remapped_boxes[:, 2] = x_offset + (remapped_boxes[:, 2] / model_input_w) * orig_tile_w
+                        remapped_boxes[:, 3] = y_offset + (remapped_boxes[:, 3] / model_input_h) * orig_tile_h
                         
                         all_boxes.append(remapped_boxes)
                         all_cls.append(result.boxes.cls.cpu())
@@ -406,15 +419,37 @@ class App(tk.Tk):
 
                         # Rimappatura maschere (più complessa, per ora uniamo i box)
                         # Per unire le maschere, dovremmo rimapparle e creare una maschera composita.
-                        # Per semplicità, ci concentriamo sui box e usiamo le maschere del primo risultato utile.
-                        if result.masks is not None and final_results.masks is None:
-                            final_results.masks = result.masks.cpu()
+                        if result.masks is not None:
+                            # Crea una maschera vuota grande quanto l'immagine originale per ogni rilevamento
+                            for mask_data in result.masks.data.cpu().numpy():
+                                # Ridimensiona la maschera del rilevamento alla dimensione del tile originale
+                                mask_resized_to_orig_tile = cv2.resize(mask_data, (orig_tile_w, orig_tile_h), interpolation=cv2.INTER_NEAREST)
+                                
+                                # Crea una maschera vuota delle dimensioni dell'immagine finale
+                                full_mask = np.zeros(original_image_rgb.shape[:2], dtype=np.uint8)
+                                
+                                # Posiziona la maschera ridimensionata nella posizione corretta
+                                full_mask[y_offset:y_end, x_offset:x_end] = mask_resized_to_orig_tile
+                                all_masks.append(full_mask)
+                        elif result.boxes is not None:
+                            # Se ci sono box ma non maschere, aggiungi placeholder vuoti
+                            all_masks.extend([np.zeros(original_image_rgb.shape[:2], dtype=np.uint8) for _ in range(len(result.boxes))])
 
                     if all_boxes:
-                        final_results.boxes = result.boxes.from_xyxy(np.concatenate(all_boxes), np.concatenate(all_cls), np.concatenate(all_conf), final_results.orig_shape)
-                        # TODO: Applicare Non-Maximum Suppression per rimuovere i duplicati nelle aree di overlap
-                        self.log("   -> Risultati dei tasselli uniti. ATTENZIONE: potrebbero esserci duplicati nelle aree di sovrapposizione.")
-                        results = [final_results.to(self.model.device)]
+                        # Unisci tutti i dati in un unico array [x1, y1, x2, y2, conf, cls]
+                        xyxy = np.concatenate(all_boxes)
+                        conf = np.concatenate(all_conf)[:, np.newaxis] # Reshape a (N, 1)
+                        cls = np.concatenate(all_cls)[:, np.newaxis]   # Reshape a (N, 1)
+                        combined_data = np.hstack((xyxy, conf, cls))
+                        
+                        if first_valid_result:
+                            # Unisci le maschere in un unico tensore
+                            if all_masks and first_valid_result.masks is not None:
+                                final_results.masks = type(first_valid_result.masks)(np.array(all_masks), final_results.orig_shape)
+
+                            final_results.boxes = type(first_valid_result.boxes)(combined_data, final_results.orig_shape)
+                            self.log("   -> Risultati dei tasselli uniti. ATTENZIONE: potrebbero esserci duplicati nelle aree di sovrapposizione.")
+                            results = [final_results.to(self.model.device)]
 
                 else:
                     results = self.model.predict(source=images_to_process, conf=0.25, save=False)
