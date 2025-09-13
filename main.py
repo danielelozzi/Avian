@@ -12,6 +12,7 @@ import threading
 import cv2
 import csv
 import datetime
+from cell_preprocessing import preprocess_image
 
 
 class App(tk.Tk):
@@ -28,13 +29,15 @@ class App(tk.Tk):
         # Variabili di stato
         self.input_path = tk.StringVar()
         self.output_path = tk.StringVar()
-        self.model_path = tk.StringVar(value="yolov8_seg.pt") # Modello di default
-        self.do_preprocessing = tk.BooleanVar(value=False) # YOLO fa già il suo preprocessing
+        self.model_path = tk.StringVar(value="yolov8nseg_avian.pt") # Modello di default
+        self.do_enhance_contrast = tk.BooleanVar(value=False)
+        self.do_isolate_and_crop = tk.BooleanVar(value=False)
         self.do_counting = tk.BooleanVar(value=True)
         self.font_size = tk.IntVar(value=12) # Valore di default per la dimensione del font
         self.line_width = tk.IntVar(value=2) # Valore di default per lo spessore della linea
         self.input_magnification = tk.IntVar(value=40) # Ingrandimento immagine input
         self.train_magnification = tk.IntVar(value=100) # Ingrandimento usato in training
+        self.do_scaling = tk.BooleanVar(value=True) # Abilita/disabilita lo scaling
 
         # --- Layout ---
         main_frame = ttk.Frame(self, padding="10")
@@ -52,24 +55,25 @@ class App(tk.Tk):
         ttk.Entry(model_frame, textvariable=self.model_path).pack(side="left", fill="x", expand=True, padx=(0, 5))
         ttk.Button(model_frame, text="Sfoglia...", command=self.browse_model).pack(side="left")
 
-        # Sezione Fasi di Analisi
-        steps_frame = ttk.LabelFrame(main_frame, text="3. Seleziona Fasi di Analisi", padding="10")
-        steps_frame.pack(fill="x", pady=5)
+        # Sezione Preprocessing
+        preproc_frame = ttk.LabelFrame(main_frame, text="3. Preprocessing (Opzionale)", padding="10")
+        preproc_frame.pack(fill="x", pady=5)
+        ttk.Checkbutton(preproc_frame, text="Migliora contrasto", variable=self.do_enhance_contrast).pack(anchor="w")
+        ttk.Checkbutton(preproc_frame, text="Isola e ritaglia campione circolare", variable=self.do_isolate_and_crop).pack(anchor="w")
 
-        self.preproc_check = ttk.Checkbutton(steps_frame, text="Esegui Preprocessing (Opzionale, non richiesto da YOLO)", variable=self.do_preprocessing)
-        self.preproc_check.pack(anchor="w")
-
-        # Checkbox per il conteggio
-        ttk.Checkbutton(steps_frame, text="Esegui Conteggio Cellule (Rilevamento e Classificazione)", variable=self.do_counting).pack(anchor="w", pady=(10, 0))
+        # Sezione Analisi
+        analysis_frame = ttk.LabelFrame(main_frame, text="4. Fasi di Analisi", padding="10")
+        analysis_frame.pack(fill="x", pady=5)
+        ttk.Checkbutton(analysis_frame, text="Esegui Conteggio Cellule (Rilevamento e Classificazione)", variable=self.do_counting).pack(anchor="w")
 
         # Sezione Output
-        output_frame = ttk.LabelFrame(main_frame, text="4. Salva Immagine Risultato", padding="10")
+        output_frame = ttk.LabelFrame(main_frame, text="5. Salva Immagine Risultato", padding="10")
         output_frame.pack(fill="x", pady=5)
         ttk.Entry(output_frame, textvariable=self.output_path).pack(side="left", fill="x", expand=True, padx=(0, 5))
         ttk.Button(output_frame, text="Salva come...", command=self.browse_output).pack(side="left")
 
         # Sezione Impostazioni Output
-        settings_frame = ttk.LabelFrame(main_frame, text="5. Impostazioni Visualizzazione", padding="10")
+        settings_frame = ttk.LabelFrame(main_frame, text="6. Impostazioni Visualizzazione", padding="10")
         settings_frame.pack(fill="x", pady=5)
 
         # Dimensione Font
@@ -85,8 +89,11 @@ class App(tk.Tk):
         ttk.Spinbox(line_frame, from_=1, to=20, increment=1, textvariable=self.line_width, width=5).pack(side="left")
 
         # Sezione Scaling
-        scale_frame = ttk.LabelFrame(main_frame, text="6. Impostazioni Scala (Magnification)", padding="10")
+        scale_frame = ttk.LabelFrame(main_frame, text="7. Impostazioni Scala (Magnification)", padding="10")
         scale_frame.pack(fill="x", pady=5)
+
+        # Checkbox per abilitare lo scaling
+        ttk.Checkbutton(scale_frame, text="Abilita scaling per magnificazione diversa", variable=self.do_scaling).pack(anchor="w", pady=(0, 5))
 
         # Magnification Input
         in_mag_frame = ttk.Frame(scale_frame)
@@ -189,18 +196,21 @@ class App(tk.Tk):
                 self.log(f"ERRORE: Impossibile caricare il modello YOLO.\n{e}")
                 messagebox.showerror("Errore Modello", f"Impossibile caricare il modello.\n\nDettagli: {e}")
                 raise
+            image_to_process = cv2.imread(input_p)
 
             self.log(f"1. Caricamento immagine da: {os.path.basename(input_p)}")
             # YOLO si aspetta il percorso del file o un array numpy
             # Passare il percorso è più efficiente
 
             # Fase di Preprocessing
-            if self.do_preprocessing.get():
-                self.log("2. Esecuzione del preprocessing (non implementato per YOLO)...")
-                # Qui potrebbe essere inserito un preprocessing custom se necessario
-                # Per ora, lo saltiamo dato che YOLO lo gestisce internamente.
+            enhance = self.do_enhance_contrast.get()
+            isolate = self.do_isolate_and_crop.get()
+            if enhance or isolate:
+                self.log(f"2. Esecuzione del preprocessing (Contrasto: {enhance}, Isola: {isolate})...")
+                image_to_process = preprocess_image(image_to_process, enhance_contrast=enhance, isolate_and_crop=isolate)
+                self.log("   -> Preprocessing completato.")
             else:
-                self.log("2. Preprocessing saltato.")
+                self.log("2. Preprocessing saltato dall'utente.")
 
             # Fase di Conteggio
             if self.do_counting.get():
@@ -211,47 +221,52 @@ class App(tk.Tk):
                 line_width = self.line_width.get()
 
                 # --- LOGICA DI SCALING E TILING ---
-                input_mag = self.input_magnification.get()
-                train_mag = self.train_magnification.get()
-                scaling_factor = train_mag / input_mag
-
-                original_image = cv2.imread(input_p)
-                original_image_rgb = cv2.cvtColor(original_image, cv2.COLOR_BGR2RGB)
+                original_image_rgb = cv2.cvtColor(image_to_process, cv2.COLOR_BGR2RGB)
                 
                 images_to_process = []
-                if scaling_factor == 1.0:
-                    self.log("   -> Ingrandimenti corrispondono. Nessuno scaling necessario.")
+                scaling_factor = 1.0
+
+                if self.do_scaling.get():
+                    input_mag = self.input_magnification.get()
+                    train_mag = self.train_magnification.get()
+                    scaling_factor = train_mag / input_mag
+
+                    if scaling_factor == 1.0:
+                        self.log("   -> Ingrandimenti corrispondono. Nessuno scaling necessario.")
+                        images_to_process.append(original_image_rgb)
+                    elif scaling_factor < 1.0: # Downscaling
+                        self.log(f"   -> Downscaling immagine di {scaling_factor:.2f}x...")
+                        new_w = int(original_image_rgb.shape[1] * scaling_factor)
+                        new_h = int(original_image_rgb.shape[0] * scaling_factor)
+                        resized = cv2.resize(original_image_rgb, (new_w, new_h), interpolation=cv2.INTER_AREA)
+                        images_to_process.append(resized)
+                    else: # Upscaling con Tiling
+                        self.log(f"   -> Upscaling richiesto ({scaling_factor:.2f}x). Avvio tiling...")
+                        model_input_size = 640 # Assumiamo 640, come da train_yolo.py
+                        tile_size = int(model_input_size / scaling_factor)
+                        overlap = int(tile_size * 0.2) # 20% di overlap
+                        stride = tile_size - overlap
+
+                        h, w, _ = original_image_rgb.shape
+                        num_tiles = 0
+                        for y in range(0, h, stride):
+                            for x in range(0, w, stride):
+                                y_end = min(y + tile_size, h)
+                                x_end = min(x + tile_size, w)
+                                tile = original_image_rgb[y:y_end, x:x_end]
+                                
+                                # Salta tile troppo piccoli
+                                if tile.shape[0] < stride/2 or tile.shape[1] < stride/2:
+                                    continue
+
+                                # Upscaling del tile alla dimensione attesa dal modello
+                                upscaled_tile = cv2.resize(tile, (model_input_size, model_input_size), interpolation=cv2.INTER_CUBIC)
+                                images_to_process.append(upscaled_tile)
+                                num_tiles += 1
+                        self.log(f"   -> Immagine suddivisa in {num_tiles} tasselli.")
+                else:
+                    self.log("   -> Scaling per magnificazione disabilitato dall'utente.")
                     images_to_process.append(original_image_rgb)
-                elif scaling_factor < 1.0: # Downscaling
-                    self.log(f"   -> Downscaling immagine di {scaling_factor:.2f}x...")
-                    new_w = int(original_image.shape[1] * scaling_factor)
-                    new_h = int(original_image.shape[0] * scaling_factor)
-                    resized = cv2.resize(original_image_rgb, (new_w, new_h), interpolation=cv2.INTER_AREA)
-                    images_to_process.append(resized)
-                else: # Upscaling con Tiling
-                    self.log(f"   -> Upscaling richiesto ({scaling_factor:.2f}x). Avvio tiling...")
-                    model_input_size = 640 # Assumiamo 640, come da train_yolo.py
-                    tile_size = int(model_input_size / scaling_factor)
-                    overlap = int(tile_size * 0.2) # 20% di overlap
-                    stride = tile_size - overlap
-
-                    h, w, _ = original_image.shape
-                    num_tiles = 0
-                    for y in range(0, h, stride):
-                        for x in range(0, w, stride):
-                            y_end = min(y + tile_size, h)
-                            x_end = min(x + tile_size, w)
-                            tile = original_image_rgb[y:y_end, x:x_end]
-                            
-                            # Salta tile troppo piccoli
-                            if tile.shape[0] < stride/2 or tile.shape[1] < stride/2:
-                                continue
-
-                            # Upscaling del tile alla dimensione attesa dal modello
-                            upscaled_tile = cv2.resize(tile, (model_input_size, model_input_size), interpolation=cv2.INTER_CUBIC)
-                            images_to_process.append(upscaled_tile)
-                            num_tiles += 1
-                    self.log(f"   -> Immagine suddivisa in {num_tiles} tasselli.")
 
                 # Esegui predizione su tutte le immagini/tasselli preparati
                 all_results = self.model.predict(source=images_to_process, conf=0.25, save=False)
