@@ -12,7 +12,8 @@ import threading
 import cv2
 import csv
 import datetime
-from cell_preprocessing import preprocess_image
+from cell_preprocessing import preprocess_image, manual_histogram_matching, tile_image
+from cell_detector import merge_tile_results
 from ultralytics.utils.plotting import Colors
 
 
@@ -40,6 +41,7 @@ class App(tk.Tk):
         self.input_magnification = tk.IntVar(value=40) # Ingrandimento immagine input
         self.train_magnification = tk.IntVar(value=100) # Ingrandimento usato in training
         self.do_scaling = tk.BooleanVar(value=True) # Abilita/disabilita lo scaling
+        self.analysis_mode = tk.StringVar(value="Simple") # Modalità di analisi
 
         # --- Layout ---
         # Creazione di un canvas e una scrollbar per rendere la finestra scorrevole
@@ -71,12 +73,19 @@ class App(tk.Tk):
         model_frame.pack(fill="x", pady=5)
         ttk.Entry(model_frame, textvariable=self.model_path).pack(side="left", fill="x", expand=True, padx=(0, 5))
         ttk.Button(model_frame, text="Sfoglia...", command=self.browse_model).pack(side="left")
-
+        
         # Sezione Preprocessing
         preproc_frame = ttk.LabelFrame(scrollable_frame, text="3. Preprocessing (Opzionale)", padding="10")
         preproc_frame.pack(fill="x", pady=5)
         ttk.Checkbutton(preproc_frame, text="Migliora contrasto", variable=self.do_enhance_contrast).pack(anchor="w")
         ttk.Checkbutton(preproc_frame, text="Isola e ritaglia campione circolare", variable=self.do_isolate_and_crop).pack(anchor="w")
+
+        # Sezione Modalità Analisi
+        mode_frame = ttk.LabelFrame(scrollable_frame, text="Modalità di Analisi", padding="10")
+        mode_frame.pack(fill="x", pady=5)
+        ttk.Radiobutton(mode_frame, text="Simple (Analisi diretta)", variable=self.analysis_mode, value="Simple").pack(anchor="w")
+        ttk.Radiobutton(mode_frame, text="Preprocess & Tile (con immagine di riferimento)", variable=self.analysis_mode, value="Preprocess & Tile").pack(anchor="w")
+
 
         # Sezione Analisi
         analysis_frame = ttk.LabelFrame(scrollable_frame, text="4. Fasi di Analisi", padding="10")
@@ -165,6 +174,10 @@ class App(tk.Tk):
         thread.start()
 
     def _create_coco_output(self, results, class_names):
+        # Se non ci sono risultati, restituisci una struttura COCO vuota.
+        if results is None or results.boxes is None or len(results.boxes) == 0:
+            return {"info": {}, "licenses": [], "images": [], "annotations": [], "categories": []}
+
         original_h, original_w = results.orig_shape
         coco_output = {
             "info": {"description": "Avian Cell Annotations (YOLOv8)", "version": "1.0", "date_created": datetime.date.today().isoformat()},
@@ -238,7 +251,7 @@ class App(tk.Tk):
         Disegna manualmente le annotazioni (maschere e riquadri) sull'immagine originale
         per preservare i colori corretti.
         """
-        if results is None or len(results) == 0:
+        if not results or not results[0] or results[0].masks is None:
             return image
 
         # Crea una copia dell'immagine per disegnarci sopra
@@ -296,6 +309,7 @@ class App(tk.Tk):
             self.log(f"1. Caricamento immagine da: {os.path.basename(input_p)}")
             # YOLO si aspetta il percorso del file o un array numpy
             # Passare il percorso è più efficiente
+            image_to_process = cv2.imread(input_p)
 
             # Fase di Preprocessing
             enhance = self.do_enhance_contrast.get()
@@ -307,161 +321,78 @@ class App(tk.Tk):
             else:
                 self.log("2. Preprocessing saltato dall'utente.")
 
+            # --- LOGICA DI ANALISI PER MODALITÀ ---
+            mode = self.analysis_mode.get()
+            self.log(f"Modalità di analisi selezionata: {mode}")
+
             # Fase di Conteggio
             if self.do_counting.get():
                 self.log(f"3. Esecuzione rilevamento e conteggio...")
-                
-                # Recupera i parametri di visualizzazione dall'interfaccia
-                font_size = self.font_size.get()
-                line_width = self.line_width.get()
+                original_image_for_drawing = image_to_process.copy()
+                results = None
 
-                # --- LOGICA DI SCALING E TILING ---
-                original_image_rgb = cv2.cvtColor(image_to_process, cv2.COLOR_BGR2RGB)
-                
-                images_to_process = []
-                scaling_factor = 1.0
-                tile_coords = [] # Memorizza le coordinate (x, y) di ogni tile
+                if mode == "Simple":
+                    self.log("   -> Esecuzione in modalità Simple...")
+                    # La predizione viene eseguita sull'intera immagine
+                    # YOLO gestisce internamente lo scaling se necessario
+                    results_list = self.model.predict(source=image_to_process, conf=0.25, save=False, verbose=False)
+                    results = results_list[0] if results_list else None
 
-                if self.do_scaling.get():
-                    input_mag = self.input_magnification.get()
-                    train_mag = self.train_magnification.get()
-                    scaling_factor = train_mag / input_mag
-
-                    if scaling_factor == 1.0:
-                        self.log("   -> Ingrandimenti corrispondono. Nessuno scaling necessario.")
-                        images_to_process.append(original_image_rgb)
-                    elif scaling_factor < 1.0: # Downscaling
-                        self.log(f"   -> Downscaling immagine di {scaling_factor:.2f}x...")
-                        new_w = int(original_image_rgb.shape[1] * scaling_factor)
-                        new_h = int(original_image_rgb.shape[0] * scaling_factor)
-                        resized = cv2.resize(original_image_rgb, (new_w, new_h), interpolation=cv2.INTER_AREA)
-                        images_to_process.append(resized)
-                    else: # Upscaling con Tiling
-                        self.log(f"   -> Upscaling richiesto ({scaling_factor:.2f}x). Avvio tiling...")
-                        model_input_size = 640 # Assumiamo 640, come da train_yolo.py
-                        tile_size = int(model_input_size / scaling_factor)
-                        overlap = int(tile_size * 0.2) # 20% di overlap
-                        stride = tile_size - overlap
-
-                        h, w, _ = original_image_rgb.shape
-                        num_tiles = 0
-                        
-                        for y in range(0, h, stride):
-                            for x in range(0, w, stride):
-                                y_end = min(y + tile_size, h)
-                                x_end = min(x + tile_size, w)
-                                tile = original_image_rgb[y:y_end, x:x_end]
-                                
-                                # Salta tile troppo piccoli
-                                if tile.shape[0] < stride/2 or tile.shape[1] < stride/2:
-                                    continue
-
-                                # Upscaling del tile alla dimensione attesa dal modello
-                                upscaled_tile = cv2.resize(tile, (model_input_size, model_input_size), interpolation=cv2.INTER_CUBIC)
-                                images_to_process.append(upscaled_tile)
-                                tile_coords.append((x, y)) # <-- Aggiungi questa riga
-                                num_tiles += 1
-                        self.log(f"   -> Immagine suddivisa in {num_tiles} tasselli.")
-                else:
-                    self.log("   -> Scaling per magnificazione disabilitato dall'utente.")
-                    images_to_process.append(original_image_rgb)
-
-                # Esegui predizione e unisci i risultati
-                results = []
-                if len(images_to_process) > 1: # Se abbiamo usato il tiling
-                    self.log(f"   -> Analisi di {len(images_to_process)} tasselli...")
-                    all_raw_results = self.model.predict(source=images_to_process, conf=0.25, save=False, verbose=False)
+                elif mode == "Preprocess & Tile":
+                    self.log("   -> Esecuzione in modalità Preprocess & Tile...")
+                    # 1. Chiedi immagine di riferimento
+                    ref_path = filedialog.askopenfilename(title="Seleziona l'immagine di riferimento per l'istogramma", filetypes=[("Image Files", "*.jpg *.jpeg *.png *.tif")])
+                    if not ref_path:
+                        self.log("   -> ERRORE: Nessuna immagine di riferimento selezionata. Analisi interrotta.")
+                        raise ValueError("Immagine di riferimento non fornita.")
                     
-                    # Prepara un oggetto Results vuoto per accumulare i risultati
-                    # Usiamo il primo risultato come template
-                    final_results = all_raw_results[0].cpu()
-                    final_results.orig_shape = original_image_rgb.shape[:2] # Imposta la dimensione dell'immagine grande
-                    final_results.boxes = None
-                    final_results.masks = None
+                    self.log(f"   -> Caricamento immagine di riferimento: {os.path.basename(ref_path)}")
+                    reference_image = cv2.imread(ref_path)
 
-                    first_valid_result = next((r for r in all_raw_results if r.boxes is not None), None)
+                    # 2. Applica histogram matching
+                    self.log("   -> Applicazione di histogram matching...")
+                    image_to_process = manual_histogram_matching(image_to_process, reference_image)
+                    original_image_for_drawing = image_to_process.copy() # Aggiorna l'immagine su cui disegnare
 
-                    all_boxes, all_masks, all_cls, all_conf = [], [], [], []
+                    # 3. Suddividi in tasselli
+                    model_input_size = 640 # Dimensione input del modello YOLO
+                    overlap = int(model_input_size * 0.2) # 20% overlap
+                    self.log(f"   -> Suddivisione in tasselli {model_input_size}x{model_input_size} con overlap di {overlap}px...")
+                    
+                    tiles_with_coords = tile_image(image_to_process, tile_size=model_input_size, overlap=overlap)
+                    if not tiles_with_coords:
+                        self.log("   -> ERRORE: Impossibile creare tasselli dall'immagine.")
+                        raise ValueError("Tiling non ha prodotto risultati.")
+                    
+                    self.log(f"   -> Creati {len(tiles_with_coords)} tasselli. Esecuzione del rilevamento...")
 
-                    for i, result in enumerate(all_raw_results):
-                        if result.boxes is None or len(result.boxes) == 0:
-                            continue
+                    # 4. Esegui rilevamento su ogni tassello
+                    tile_images = [t[0] for t in tiles_with_coords]
+                    raw_results = self.model.predict(source=tile_images, conf=0.25, save=False, verbose=False)
+                    
+                    # Accoppia i risultati con le coordinate
+                    results_with_coords = list(zip(raw_results, [t[1] for t in tiles_with_coords]))
 
-                        x_offset, y_offset = tile_coords[i]
-                        
-                        # Calcola il fattore di scala inverso per rimappare le coordinate
-                        # dal tile upscalato (es. 640x640) al tile originale.
-                        # La dimensione del tile originale è tile_size x tile_size
-                        model_input_w, model_input_h = result.orig_shape
-                        
-                        # La dimensione effettiva del tile estratto dall'immagine originale
-                        # Questo è importante per i tasselli ai bordi che possono essere più piccoli
-                        y_end = min(y_offset + int(model_input_h / scaling_factor), original_image_rgb.shape[0])
-                        x_end = min(x_offset + int(model_input_w / scaling_factor), original_image_rgb.shape[1])
-                        orig_tile_h = y_end - y_offset
-                        orig_tile_w = x_end - x_offset
-
-                        # Clona i box per non modificare l'originale
-                        remapped_boxes = result.boxes.xyxy.cpu().clone()
-
-                        # Rimappa le coordinate dei box
-                        # 1. Normalizza la coordinata rispetto alla dimensione del tile upscalato (es. 640)
-                        # 2. Moltiplica per la dimensione reale del tile originale
-                        # 3. Aggiungi l'offset del tile nell'immagine grande
-                        remapped_boxes[:, 0] = x_offset + (remapped_boxes[:, 0] / model_input_w) * orig_tile_w
-                        remapped_boxes[:, 1] = y_offset + (remapped_boxes[:, 1] / model_input_h) * orig_tile_h
-                        remapped_boxes[:, 2] = x_offset + (remapped_boxes[:, 2] / model_input_w) * orig_tile_w
-                        remapped_boxes[:, 3] = y_offset + (remapped_boxes[:, 3] / model_input_h) * orig_tile_h
-                        
-                        all_boxes.append(remapped_boxes)
-                        all_cls.append(result.boxes.cls.cpu())
-                        all_conf.append(result.boxes.conf.cpu())
-
-                        # Rimappatura maschere (più complessa, per ora uniamo i box)
-                        # Per unire le maschere, dovremmo rimapparle e creare una maschera composita.
-                        if result.masks is not None:
-                            # Crea una maschera vuota grande quanto l'immagine originale per ogni rilevamento
-                            for mask_data in result.masks.data.cpu().numpy():
-                                # Ridimensiona la maschera del rilevamento alla dimensione del tile originale
-                                mask_resized_to_orig_tile = cv2.resize(mask_data, (orig_tile_w, orig_tile_h), interpolation=cv2.INTER_NEAREST)
-                                
-                                # Crea una maschera vuota delle dimensioni dell'immagine finale
-                                full_mask = np.zeros(original_image_rgb.shape[:2], dtype=np.uint8)
-                                
-                                # Posiziona la maschera ridimensionata nella posizione corretta
-                                full_mask[y_offset:y_end, x_offset:x_end] = mask_resized_to_orig_tile
-                                all_masks.append(full_mask)
-                        elif result.boxes is not None:
-                            # Se ci sono box ma non maschere, aggiungi placeholder vuoti
-                            all_masks.extend([np.zeros(original_image_rgb.shape[:2], dtype=np.uint8) for _ in range(len(result.boxes))])
-
-                    if all_boxes:
-                        # Unisci tutti i dati in un unico array [x1, y1, x2, y2, conf, cls]
-                        xyxy = np.concatenate(all_boxes)
-                        conf = np.concatenate(all_conf)[:, np.newaxis] # Reshape a (N, 1)
-                        cls = np.concatenate(all_cls)[:, np.newaxis]   # Reshape a (N, 1)
-                        combined_data = np.hstack((xyxy, conf, cls))
-                        
-                        if first_valid_result:
-                            # Unisci le maschere in un unico tensore
-                            if all_masks and first_valid_result.masks is not None:
-                                final_results.masks = type(first_valid_result.masks)(np.array(all_masks), final_results.orig_shape)
-
-                            final_results.boxes = type(first_valid_result.boxes)(combined_data, final_results.orig_shape)
-                            self.log("   -> Risultati dei tasselli uniti. ATTENZIONE: potrebbero esserci duplicati nelle aree di sovrapposizione.")
-                            results = [final_results.to(self.model.device)]
+                    # 5. Unisci i risultati
+                    self.log("   -> Unione dei risultati dei tasselli e applicazione di NMS...")
+                    results = merge_tile_results(results_with_coords, original_shape=image_to_process.shape, conf_threshold=0.25, iou_threshold=0.45)
+                    self.log("   -> Unione completata.")
 
                 else:
-                    results = self.model.predict(source=images_to_process, conf=0.25, save=False)
+                    raise NotImplementedError(f"Modalità '{mode}' non riconosciuta.")
 
                 # Controlla se sono state fatte delle rilevazioni
-                if results and results[0].masks is not None and len(results[0].masks) > 0:
-                    annotated_image_bgr = self._draw_annotations(cv2.cvtColor(original_image_rgb, cv2.COLOR_RGB2BGR), results, self.model.names, line_width, font_size)
+                if results and results.boxes is not None and len(results.boxes) > 0:
+                    # Per il disegno, passiamo un solo oggetto Results in una lista
+                    # La funzione _draw_annotations si aspetta una lista
+                    font_size = self.font_size.get()
+                    line_width = self.line_width.get()
+                    annotated_image_bgr = self._draw_annotations(original_image_for_drawing, [results], self.model.names, line_width, font_size)
                     # Converti in RGB per il salvataggio con Pillow
                     annotated_image_rgb = cv2.cvtColor(annotated_image_bgr, cv2.COLOR_BGR2RGB)
 
                     # Conta le cellule per classe
-                    class_ids = results[0].boxes.cls.cpu().numpy().astype(int)
+                    class_ids = results.boxes.cls.cpu().numpy().astype(int)
                     class_names = self.model.names
                     counts = {class_names[cid]: np.count_nonzero(class_ids == cid) for cid in np.unique(class_ids)}
                     self.log(f"   -> Conteggio completato.")
@@ -489,7 +420,7 @@ class App(tk.Tk):
 
                     # Salva il file JSON
                     json_path = os.path.splitext(output_p)[0] + ".json"
-                    coco_data = self._create_coco_output(results[0], class_names)
+                    coco_data = self._create_coco_output(results, class_names)
                     coco_data['images'][0]['file_name'] = os.path.basename(output_p)
 
                     with open(json_path, 'w') as f:
@@ -509,12 +440,12 @@ class App(tk.Tk):
                         self.log(f"   -> ERRORE nel salvataggio del file CSV: {e}")
                 else:
                     self.log("   -> Nessuna cellula rilevata nell'immagine con la confidenza attuale.")
-                    # Se non viene rilevato nulla, usa l'immagine originale
-                    annotated_image_rgb = original_image_rgb
+                    # Se non viene rilevato nulla, usa l'immagine processata (o originale)
+                    annotated_image_rgb = cv2.cvtColor(original_image_for_drawing, cv2.COLOR_BGR2RGB)
 
             else:
                 self.log("3. Conteggio cellule saltato.")
-                # Se il conteggio è saltato, carica l'immagine originale per il salvataggio
+                # Se il conteggio è saltato, usa l'immagine processata
                 annotated_image_rgb = np.array(Image.open(input_p))
 
             # Salvataggio
@@ -528,7 +459,7 @@ class App(tk.Tk):
             messagebox.showerror("Errore", f"File non trovato: {input_p}")
             self.log(f"ERRORE: File non trovato: {input_p}")
         except Exception as e:
-            messagebox.showerror("Errore", f"Si è verificato un errore: {e}")
+            messagebox.showerror("Errore", f"Si è verificato un errore imprevisto: {e}")
             # L'errore specifico viene già loggato dove si verifica
         finally:
             self.run_button.config(state="normal")

@@ -1,12 +1,13 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+import cv2
 import numpy as np
 import pandas as pd
 import skimage
 from skimage.measure import regionprops_table, label, find_contours
 from skimage.exposure import equalize_adapthist
-from skimage.filters import threshold_otsu
+from skimage.filters import threshold_otsu, sobel
 from skimage.color import rgb2hsv, hsv2rgb
 import matplotlib.pyplot as plt
 
@@ -93,3 +94,62 @@ def preprocess_image(image_array: np.ndarray, enhance_contrast: bool = True, iso
             print("Attenzione: impossibile isolare e ritagliare il campione. Il passaggio è stato saltato.")
 
     return processed_image
+
+
+def manual_histogram_matching(source_image: np.ndarray, reference_image: np.ndarray) -> np.ndarray:
+    """
+    Allinea il colore e il contrasto dell'immagine sorgente a quelli dell'immagine di riferimento
+    utilizzando l'histogram matching su ogni canale di colore.
+
+    Args:
+        source_image (np.ndarray): L'immagine da modificare (in formato BGR).
+        reference_image (np.ndarray): L'immagine di riferimento (in formato BGR).
+
+    Returns:
+        np.ndarray: L'immagine sorgente con colori e contrasto allineati.
+    """
+    matched_image = np.zeros_like(source_image)
+    for i in range(3):  # Itera sui canali B, G, R
+        hist_src, _ = np.histogram(source_image[:, :, i].ravel(), 256, [0, 256])
+        hist_ref, _ = np.histogram(reference_image[:, :, i].ravel(), 256, [0, 256])
+
+        cdf_src = hist_src.cumsum()
+        cdf_ref = hist_ref.cumsum()
+
+        cdf_src_normalized = cdf_src * hist_ref.sum() / cdf_src.sum()
+
+        lookup_table = np.zeros(256, dtype='uint8')
+        g = 0
+        for j in range(256):
+            while g < 256 and cdf_ref[g] < cdf_src_normalized[j]:
+                g += 1
+            lookup_table[j] = g
+
+        matched_image[:, :, i] = cv2.LUT(source_image[:, :, i], lookup_table)
+
+    return matched_image
+
+
+def tile_image(image: np.ndarray, tile_size: int, overlap: int) -> list:
+    """
+    Suddivide un'immagine in tasselli sovrapposti.
+
+    Args:
+        image (np.ndarray): L'immagine da suddividere.
+        tile_size (int): La dimensione (larghezza e altezza) di ogni tassello.
+        overlap (int): Il numero di pixel di sovrapposizione tra i tasselli.
+
+    Returns:
+        list: Una lista di tuple, dove ogni tupla contiene un tassello e le sue coordinate (x, y) originali.
+    """
+    h, w, _ = image.shape
+    stride = tile_size - overlap
+    tiles = []
+    for y in range(0, h, stride):
+        for x in range(0, w, stride):
+            y_end = min(y + tile_size, h)
+            x_end = min(x + tile_size, w)
+            tile = image[y:y_end, x:x_end]
+            if tile.shape[0] > overlap and tile.shape[1] > overlap: # Salta tasselli troppo piccoli
+                tiles.append((tile, (x, y)))
+    return tiles
