@@ -4,10 +4,10 @@
 import numpy as np
 import pandas as pd
 import skimage
-from skimage.measure import regionprops_table, label
-from skimage.exposure import rescale_intensity, equalize_adapthist
+from skimage.measure import regionprops_table, label, find_contours
+from skimage.exposure import equalize_adapthist
 from skimage.filters import threshold_otsu
-from PIL import Image
+from skimage.color import rgb2hsv, hsv2rgb
 import matplotlib.pyplot as plt
 
 
@@ -56,13 +56,18 @@ def preprocess_image(image_array: np.ndarray, enhance_contrast: bool = True, iso
 
     # 2. Miglioramento del contrasto (opzionale)
     if enhance_contrast:
-        # Usa multi-otsu a 3 classi per definire i limiti.
-        # È un compromesso efficiente che si adatta all'immagine.
-        red_channel = processed_image[:, :, 0]
-        thresholds = skimage.filters.threshold_multiotsu(red_channel, classes=3)
-        p_low, p_high = thresholds[0], thresholds[1]
-        processed_image = rescale_intensity(processed_image, in_range=(p_low, p_high))
-
+        # Conversione in spazio colore HSV per separare la luminosità (V) dal colore (H, S)
+        hsv_image = rgb2hsv(processed_image)
+        
+        # Applica CLAHE (Contrast Limited Adaptive Histogram Equalization) al canale V (Value)
+        # Questo migliora il contrasto locale senza alterare i colori.
+        v_channel = hsv_image[:, :, 2]
+        v_channel_enhanced = equalize_adapthist(v_channel, clip_limit=0.01)
+        hsv_image[:, :, 2] = v_channel_enhanced
+        
+        # Riconverti in RGB e assicurati che sia nel formato corretto (uint8)
+        processed_image = (hsv2rgb(hsv_image) * 255).astype(np.uint8)
+        
     # 3. Isolamento e ritaglio del campione (opzionale)
     if isolate_and_crop:
         try:
@@ -83,7 +88,7 @@ def preprocess_image(image_array: np.ndarray, enhance_contrast: bool = True, iso
             # Ritaglio dell'immagine sull'area di interesse
             xmin, ymin, xmax, ymax = [df[f'bbox-{i}'].iat[0] for i in range(4)]
             processed_image = processed_image[xmin:xmax, ymin:ymax]
-        except (IndexError, ValueError):
+        except (IndexError, ValueError) as e:
             # Se il rilevamento del campione fallisce, restituisce l'immagine così com'è
             print("Attenzione: impossibile isolare e ritagliare il campione. Il passaggio è stato saltato.")
 
