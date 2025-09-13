@@ -2,7 +2,7 @@
 # coding: utf-8
 
 import json
-import tkinter as tk
+import tkinter as tk 
 from tkinter import filedialog, messagebox, ttk
 from ultralytics import YOLO
 import numpy as np
@@ -13,6 +13,7 @@ import cv2
 import csv
 import datetime
 from cell_preprocessing import preprocess_image
+from ultralytics.utils.plotting import Colors
 
 
 class App(tk.Tk):
@@ -25,6 +26,7 @@ class App(tk.Tk):
         self.geometry("800x600")
  
         self.model = None
+        self.colors = Colors() # Istanza per la gestione dei colori
  
         # Variabili di stato
         self.input_path = tk.StringVar()
@@ -177,6 +179,45 @@ class App(tk.Tk):
         # Funzione di utilità per unire i risultati (per ora semplice concatenazione)
         return all_results
 
+    def _draw_annotations(self, image, results, class_names, line_width, font_size):
+        """
+        Disegna manualmente le annotazioni (maschere e riquadri) sull'immagine originale
+        per preservare i colori corretti.
+        """
+        if results is None or len(results) == 0:
+            return image
+
+        # Crea una copia dell'immagine per disegnarci sopra
+        overlay = image.copy()
+        annotated_image = image.copy()
+
+        # Estrai maschere, riquadri e classi
+        masks = results[0].masks.data.cpu().numpy()
+        boxes = results[0].boxes.data.cpu().numpy()
+
+        for i, mask_data in enumerate(masks):
+            # Prendi il colore dalla mappa del modello
+            class_id = int(boxes[i, 5])
+            color = self.colors(class_id, True) # Ottiene il colore BGR
+
+            # Disegna la maschera di segmentazione
+            # Ridimensiona la maschera alla dimensione dell'immagine originale
+            mask = cv2.resize(mask_data, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
+            overlay[mask > 0.5] = color
+
+            # Disegna il riquadro (bounding box)
+            x1, y1, x2, y2 = map(int, boxes[i, :4])
+            cv2.rectangle(annotated_image, (x1, y1), (x2, y2), color, line_width)
+
+            # Prepara e disegna l'etichetta (classe + confidenza)
+            label = f"{class_names[class_id]} {boxes[i, 4]:.2f}"
+            (w, h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_size / 20.0, 1)
+            cv2.rectangle(annotated_image, (x1, y1 - h - 5), (x1 + w, y1), color, -1)
+            cv2.putText(annotated_image, label, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, font_size / 20.0, (255, 255, 255), 1, cv2.LINE_AA)
+
+        # Unisci l'overlay della maschera con l'immagine annotata
+        return cv2.addWeighted(overlay, 0.4, annotated_image, 0.6, 0)
+
     def run_analysis(self):
         input_p = self.input_path.get()
         output_p = self.output_path.get()
@@ -282,8 +323,10 @@ class App(tk.Tk):
 
                 # Controlla se sono state fatte delle rilevazioni
                 if results and results[0].masks is not None and len(results[0].masks) > 0:
-                    # Ottieni l'immagine con le annotazioni, passando i parametri personalizzati
-                    annotated_image_bgr = results[0].plot(font_size=font_size, line_width=line_width) # Disegna sul primo risultato
+                    # Disegna le annotazioni sull'immagine che è stata effettivamente processata
+                    # (quindi, dopo il preprocessing e lo scaling se applicati).
+                    annotated_image_bgr = self._draw_annotations(image_to_process, results, self.model.names, line_width, font_size)
+                    # Converti in RGB per il salvataggio con Pillow
                     annotated_image_rgb = cv2.cvtColor(annotated_image_bgr, cv2.COLOR_BGR2RGB)
 
                     # Conta le cellule per classe
