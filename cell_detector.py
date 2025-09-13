@@ -34,14 +34,14 @@ def merge_tile_results(tile_results: list, original_shape: tuple, conf_threshold
     all_masks = []
     
     if not tile_results:
-        return None
+        # Restituisce un oggetto Results vuoto se non ci sono risultati validi.
+        template_result = Results(orig_img=np.zeros((*original_shape, 3), dtype=np.uint8), path="", names={})
+        return template_result.new()
 
     # Prendi un risultato valido come template
-    template_result = next((res for res, _ in tile_results if res is not None), None)
+    template_result = next((res for res, _ in tile_results if res is not None and res.boxes is not None), None)
     if template_result is None:
-        # Se nessun risultato è valido, non possiamo creare un oggetto Results.
-        # In questo caso, è meglio restituire un oggetto Results vuoto ma valido.
-        # Creiamo un template fittizio per questo scopo.
+        # Se nessun risultato è valido, restituisci un oggetto Results vuoto ma valido.
         from ultralytics.engine.results import Boxes, Masks
         return Results(orig_img=np.zeros((*original_shape, 3), dtype=np.uint8), path="", names={}, boxes=Boxes(np.array([]), original_shape), masks=Masks(np.array([]), original_shape))
 
@@ -58,8 +58,8 @@ def merge_tile_results(tile_results: list, original_shape: tuple, conf_threshold
         all_scores.extend(result.boxes.conf.cpu().numpy())
         all_classes.extend(result.boxes.cls.cpu().numpy())
 
-        # Rimappa Maschere
-        if result.masks is not None:
+        # Rimappa Maschere se presenti
+        if result.masks is not None and result.masks.data is not None:
             for mask_data in result.masks.data.cpu().numpy():
                 # Ridimensiona la maschera alla dimensione del tile
                 tile_h, tile_w = result.orig_shape
@@ -69,8 +69,7 @@ def merge_tile_results(tile_results: list, original_shape: tuple, conf_threshold
                 full_mask = np.zeros(original_shape[:2], dtype=np.uint8)
                 
                 # Posiziona la maschera ridimensionata
-                h, w = mask_resized.shape
-                y_end, x_end = y_offset + h, x_offset + w
+                y_end, x_end = y_offset + mask_resized.shape[0], x_offset + mask_resized.shape[1]
                 full_mask[y_offset:y_end, x_offset:x_end] = mask_resized
                 all_masks.append(full_mask)
 
@@ -81,33 +80,29 @@ def merge_tile_results(tile_results: list, original_shape: tuple, conf_threshold
     indices = cv2.dnn.NMSBoxes(all_boxes, all_scores, conf_threshold, iou_threshold)
     
     # Crea un nuovo oggetto Results con i dati filtrati
-    final_boxes = np.array(all_boxes)[indices]
-    final_scores = np.array(all_scores)[indices]
-    final_classes = np.array(all_classes)[indices]
-    final_masks = np.array(all_masks)[indices] if all_masks else None
-
-    # Se final_masks ha una sola dimensione (un solo risultato), aggiungi una dimensione per renderlo [1, H, W]
-    if final_masks is not None and final_masks.ndim == 2:
-        final_masks = np.expand_dims(final_masks, axis=0)
-
-
-    # Combina i dati dei box in formato [x1, y1, x2, y2, conf, cls]
-    combined_data = np.hstack((final_boxes, final_scores[:, np.newaxis], final_classes[:, np.newaxis]))
-
-    # Crea l'oggetto Results finale
+    final_boxes = np.array(all_boxes)[indices.flatten()]
+    final_scores = np.array(all_scores)[indices.flatten()]
+    final_classes = np.array(all_classes)[indices.flatten()]
+    
     final_result = template_result.new()
-    final_result.orig_shape = original_shape # Assicura che orig_shape sia sempre impostato
-    final_result.boxes = type(template_result.boxes)(combined_data, orig_shape=original_shape)
-    if final_masks is not None and template_result.masks is not None:
-        final_result.masks = type(template_result.masks)(final_masks, orig_shape=original_shape)
-        # Forza il calcolo dei contorni poligonali (segmenti) accedendo alla proprietà .xy
-        _ = final_result.masks.xy
-
+    final_result.orig_shape = original_shape
+    final_result.boxes = type(template_result.boxes)(np.hstack((final_boxes, final_scores[:, np.newaxis], final_classes[:, np.newaxis])), orig_shape=original_shape)
+    
+    if all_masks:
+        final_masks_data = np.array([all_masks[i] for i in indices.flatten()])
+        if final_masks_data.size > 0:
+            final_result.masks = type(template_result.masks)(final_masks_data, orig_shape=original_shape)
+            # Forza il calcolo dei contorni poligonali (segmenti) accedendo alla proprietà .xy
+            try:
+                _ = final_result.masks.xy
+            except AttributeError:
+                # Se l'attributo xy non può essere calcolato, impostiamo le maschere su None
+                final_result.masks = None
+    
     return final_result
 
 def main():
     model_path = os.path.join(os.getcwd(), 'yolov8nseg_avian.pt')
-    # Modifica il percorso del file sorgente per usare IMG_3064.jpg
     image_path = os.path.join(os.getcwd(), 'test_img/IMG_3064.jpg')
     
     if not os.path.exists(image_path):
