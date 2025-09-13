@@ -39,7 +39,11 @@ def merge_tile_results(tile_results: list, original_shape: tuple, conf_threshold
     # Prendi un risultato valido come template
     template_result = next((res for res, _ in tile_results if res is not None), None)
     if template_result is None:
-        return None
+        # Se nessun risultato è valido, non possiamo creare un oggetto Results.
+        # In questo caso, è meglio restituire un oggetto Results vuoto ma valido.
+        # Creiamo un template fittizio per questo scopo.
+        from ultralytics.engine.results import Boxes, Masks
+        return Results(orig_img=np.zeros((*original_shape, 3), dtype=np.uint8), path="", names={}, boxes=Boxes(np.array([]), original_shape), masks=Masks(np.array([]), original_shape))
 
     for result, (x_offset, y_offset) in tile_results:
         if result is None or result.boxes is None:
@@ -82,14 +86,22 @@ def merge_tile_results(tile_results: list, original_shape: tuple, conf_threshold
     final_classes = np.array(all_classes)[indices]
     final_masks = np.array(all_masks)[indices] if all_masks else None
 
-    # Combina in formato [x1, y1, x2, y2, conf, cls]
+    # Se final_masks ha una sola dimensione (un solo risultato), aggiungi una dimensione per renderlo [1, H, W]
+    if final_masks is not None and final_masks.ndim == 2:
+        final_masks = np.expand_dims(final_masks, axis=0)
+
+
+    # Combina i dati dei box in formato [x1, y1, x2, y2, conf, cls]
     combined_data = np.hstack((final_boxes, final_scores[:, np.newaxis], final_classes[:, np.newaxis]))
 
     # Crea l'oggetto Results finale
     final_result = template_result.new()
+    final_result.orig_shape = original_shape # Assicura che orig_shape sia sempre impostato
     final_result.boxes = type(template_result.boxes)(combined_data, orig_shape=original_shape)
     if final_masks is not None and template_result.masks is not None:
         final_result.masks = type(template_result.masks)(final_masks, orig_shape=original_shape)
+        # Forza il calcolo dei contorni poligonali (segmenti) accedendo alla proprietà .xy
+        _ = final_result.masks.xy
 
     return final_result
 

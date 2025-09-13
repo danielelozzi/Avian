@@ -37,39 +37,38 @@ def create_circular_mask(h, w, center=None, radius=None):
     return mask
 
 
-def preprocess_image(image_array: np.ndarray, enhance_contrast: bool = True, isolate_and_crop: bool = True) -> np.ndarray:
+def preprocess_image(image_array: np.ndarray, enhance_contrast: bool = False, isolate_and_crop: bool = False,
+                     do_tiling: bool = False, tile_size: int = 640, overlap: int = 128,
+                     do_scaling: bool = False, input_magnification: int = 100, train_magnification: int = 100,
+                     do_histogram_matching: bool = False, reference_image: np.ndarray = None,
+                     ) -> tuple:
     """
-    Preprocessa un'immagine di un vetrino per isolare e ritagliare l'area di interesse.
+    Esegue una pipeline di preprocessing su un'immagine seguendo un ordine specifico.
 
     Args:
         image_array (np.ndarray): L'immagine di input come array NumPy.
-        enhance_contrast (bool): Se True, migliora il contrasto dell'immagine.
         isolate_and_crop (bool): Se True, isola l'area circolare del campione e la ritaglia.
+        enhance_contrast (bool): Se True, migliora il contrasto dell'immagine.
+        do_tiling (bool): Se True, suddivide l'immagine in tasselli.
+        tile_size (int): Dimensione dei tasselli.
+        overlap (int): Sovrapposizione dei tasselli.
+        do_scaling (bool): Se True, esegue lo scaling dell'immagine/tasselli.
+        input_magnification (int): Ingrandimento dell'immagine di input.
+        train_magnification (int): Ingrandimento usato per l'addestramento del modello.
+        do_histogram_matching (bool): Se True, esegue l'histogram matching.
+        reference_image (np.ndarray, optional): Immagine di riferimento per l'histogram matching.
 
     Returns:
-        np.ndarray: L'immagine preprocessata e ritagliata come array NumPy.
+        tuple: Una tupla contenente (lista di immagini, lista di coordinate, immagine originale processata).
+               Se il tiling non è attivo, la lista di immagini e coordinate conterrà un solo elemento.
     """
     processed_image = image_array.copy()
 
     # 1. Esclusione del canale alpha se presente
     if processed_image.shape[-1] == 4:
         processed_image = processed_image[:, :, 0:3]
-
-    # 2. Miglioramento del contrasto (opzionale)
-    if enhance_contrast:
-        # Conversione in spazio colore HSV per separare la luminosità (V) dal colore (H, S)
-        hsv_image = rgb2hsv(processed_image)
-        
-        # Applica CLAHE (Contrast Limited Adaptive Histogram Equalization) al canale V (Value)
-        # Questo migliora il contrasto locale senza alterare i colori.
-        v_channel = hsv_image[:, :, 2]
-        v_channel_enhanced = equalize_adapthist(v_channel, clip_limit=0.01)
-        hsv_image[:, :, 2] = v_channel_enhanced
-        
-        # Riconverti in RGB e assicurati che sia nel formato corretto (uint8)
-        processed_image = (hsv2rgb(hsv_image) * 255).astype(np.uint8)
-        
-    # 3. Isolamento e ritaglio del campione (opzionale)
+    
+    # 2. Isolamento e ritaglio del campione (opzionale)
     if isolate_and_crop:
         try:
             # Identificazione dell'area del vetrino usando threshold_otsu
@@ -93,7 +92,56 @@ def preprocess_image(image_array: np.ndarray, enhance_contrast: bool = True, iso
             # Se il rilevamento del campione fallisce, restituisce l'immagine così com'è
             print("Attenzione: impossibile isolare e ritagliare il campione. Il passaggio è stato saltato.")
 
-    return processed_image
+    # 3. Miglioramento del contrasto (opzionale)
+    if enhance_contrast:
+        # Conversione in spazio colore HSV per separare la luminosità (V) dal colore (H, S)
+        hsv_image = rgb2hsv(processed_image)
+        
+        # Applica CLAHE (Contrast Limited Adaptive Histogram Equalization) al canale V (Value)
+        v_channel = hsv_image[:, :, 2]
+        v_channel_enhanced = equalize_adapthist(v_channel, clip_limit=0.01)
+        hsv_image[:, :, 2] = v_channel_enhanced
+        
+        # Riconverti in RGB e assicurati che sia nel formato corretto (uint8)
+        processed_image = (hsv2rgb(hsv_image) * 255).astype(np.uint8)
+
+    original_processed_image = processed_image.copy()
+    images_to_process = [processed_image]
+    coords = [(0, 0)]
+
+    # 4. Tiling (opzionale)
+    if do_tiling:
+        tiles_with_coords = tile_image(processed_image, tile_size=tile_size, overlap=overlap)
+        images_to_process = [t[0] for t in tiles_with_coords]
+        coords = [t[1] for t in tiles_with_coords]
+
+    # 5. Scaling (opzionale)
+    if do_scaling and input_magnification != train_magnification:
+        scale_factor = train_magnification / input_magnification
+        scaled_images = []
+        for img in images_to_process:
+            if scale_factor != 1.0:
+                h, w = img.shape[:2]
+                new_h, new_w = int(h * scale_factor), int(w * scale_factor)
+                # Usa INTER_AREA per rimpicciolire, INTER_LANCZOS4 per ingrandire
+                interpolation = cv2.INTER_AREA if scale_factor < 1.0 else cv2.INTER_LANCZOS4
+                scaled_img = cv2.resize(img, (new_w, new_h), interpolation=interpolation)
+                scaled_images.append(scaled_img)
+            else:
+                scaled_images.append(img)
+        images_to_process = scaled_images
+
+    # 6. Histogram Matching (opzionale)
+    if do_histogram_matching:
+        if reference_image is not None:
+            matched_images = []
+            for img in images_to_process:
+                matched_images.append(manual_histogram_matching(img, reference_image))
+            images_to_process = matched_images
+        else:
+            print("Attenzione: Histogram matching richiesto ma nessuna immagine di riferimento fornita. Passaggio saltato.")
+
+    return images_to_process, coords, original_processed_image
 
 
 def manual_histogram_matching(source_image: np.ndarray, reference_image: np.ndarray) -> np.ndarray:
