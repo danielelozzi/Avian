@@ -1,0 +1,12 @@
+path: ../avian_yolo_dataset
+train: images/train
+val: images/val
+test: images/test
+names:
+  0: Erythocyte (nucleus)
+  1: Eosinophil
+  2: Lymphocyte
+  3: Heterophil
+  4: Erythrocyte (cell) with parasite
+  5: Monocyte
+  6: Basophil
