@@ -43,25 +43,20 @@ def merge_tile_results(
     all_segments = []
 
     if not tile_results:
-        return Results(
-            orig_img=np.zeros((*original_shape, 3), dtype=np.uint8),
-            path="",
-            names={},
-            boxes=Boxes(np.array([]), original_shape),
-            masks=Masks(np.array([]), original_shape),
-        )
+        # Se non ci sono risultati, restituisci un oggetto Results vuoto ma con le dimensioni corrette
+        return Results(orig_img=np.zeros((*original_shape, 3), dtype=np.uint8), path="", names={}, boxes=None, masks=None)
 
     template_result = next(
         (res for res, _ in tile_results if res is not None and res.boxes is not None), None
     )
     if template_result is None:
-        return Results(
-            orig_img=np.zeros((*original_shape, 3), dtype=np.uint8),
-            path="",
-            names={},
-            boxes=Boxes(np.array([]), original_shape),
-            masks=Masks(np.array([]), original_shape),
-        )
+        # Se nessun tassello ha prodotto risultati, restituisci un oggetto vuoto
+        return Results(orig_img=np.zeros((*original_shape, 3), dtype=np.uint8), path="", names={}, boxes=None, masks=None)
+
+    # --- CORREZIONE CHIAVE ---
+    # Creiamo un nuovo oggetto Results da zero con le dimensioni dell'immagine originale,
+    # invece di usare un template da un tassello (che ha dimensioni errate, es. 640x640).
+    final_result = Results(orig_img=np.zeros((*original_shape, 3), dtype=np.uint8), path=template_result.path, names=template_result.names)
 
     for result, (x_offset, y_offset) in tile_results:
         if result is None or result.boxes is None:
@@ -96,7 +91,7 @@ def merge_tile_results(
     if not all_boxes:
         return template_result.new()
 
-    indices = cv2.dnn.NMSBoxes(all_boxes, all_scores, conf_threshold, iou_threshold)
+    indices = cv2.dnn.NMSBoxes(np.array(all_boxes, dtype=np.float32), np.array(all_scores, dtype=np.float32), conf_threshold, iou_threshold)
 
     if len(indices) == 0:
         return template_result.new()
@@ -119,8 +114,6 @@ def merge_tile_results(
             new_segments.append(seg)
         final_segments = new_segments
 
-    final_result = template_result.new()
-    final_result.orig_shape = original_shape
     final_result.boxes = Boxes(
         np.hstack(
             (final_boxes_xyxy, final_scores[:, np.newaxis], final_classes[:, np.newaxis])
@@ -130,8 +123,10 @@ def merge_tile_results(
 
     if any(seg.size > 0 for seg in final_segments):
         # Ricostruisce le maschere bitmap dai poligoni finali
+        # Le dimensioni della maschera devono corrispondere a quelle dell'immagine
         final_mask_tensor = []
-        h, w = original_shape[:2]
+        h, w = final_result.orig_shape[:2]
+
         for seg in final_segments:
             if seg.size > 0:
                 mask = np.zeros((h, w), dtype=np.uint8)
@@ -140,16 +135,19 @@ def merge_tile_results(
             else:
                 final_mask_tensor.append(np.zeros((h, w), dtype=np.uint8))
 
+        # --- CORREZIONE FINALE ---
+        # L'oggetto Masks ha bisogno sia delle maschere binarie (per il calcolo)
+        # sia dei segmenti poligonali (per il disegno). Dobbiamo fornirgli entrambi.
+        # I segmenti devono essere normalizzati rispetto alle dimensioni dell'immagine.
         if final_mask_tensor:
-            final_result.masks = Masks(
-                np.array(final_mask_tensor), orig_shape=original_shape
-            )
+            # Creando l'oggetto Masks dalle maschere binarie, la libreria calcolerà automaticamente i poligoni (attributo .xy)
+            final_result.masks = Masks(masks=np.array(final_mask_tensor), orig_shape=final_result.orig_shape)
 
     return final_result
 
 
 def main():
-    model_path = os.path.join(os.getcwd(), "yolov8nseg_avian.pt")
+    model_path = os.path.join(os.getcwd(), "yolov8nseg_avian_100epoche.pt")
     image_path = os.path.join(os.getcwd(), "test_img/IMG_3064.jpg")
 
     if not os.path.exists(image_path):

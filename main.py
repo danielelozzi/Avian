@@ -32,7 +32,7 @@ class App(tk.Tk):
         # Variabili di stato
         self.input_path = tk.StringVar()
         self.output_path = tk.StringVar()
-        self.model_path = tk.StringVar(value="yolov8nseg_avian.pt")  # Modello di default
+        self.model_path = tk.StringVar(value="yolov8nseg_avian_100epoche.pt")  # Modello di default
         self.do_enhance_contrast = tk.BooleanVar(value=False)
         self.do_isolate_and_crop = tk.BooleanVar(value=False)
         self.do_counting = tk.BooleanVar(value=True)
@@ -220,18 +220,10 @@ class App(tk.Tk):
         overlay = image.copy()
         annotated_image = image.copy()
         boxes = self._to_numpy(results.boxes.data)
-
-        segments = []
-        if results.masks is not None:
-            masks_np = self._to_numpy(results.masks.data)
-            for mask in masks_np:
-                contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                if contours:
-                    seg = max(contours, key=cv2.contourArea).squeeze(1)
-                    segments.append(seg)
-                else:
-                    segments.append(np.array([]))
-
+        
+        # Usa direttamente i segmenti poligonali se disponibili
+        segments = results.masks.xy if results.masks is not None else [np.array([])] * len(boxes)
+        
         for i, (box, segment) in enumerate(zip(boxes, segments)):
             if segment.size == 0:
                 continue
