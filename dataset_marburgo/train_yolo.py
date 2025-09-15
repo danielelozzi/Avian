@@ -40,7 +40,7 @@ def train_model():
         data='avian_blood_cells.yaml',
         device=device,
         epochs=100,
-        imgsz=640,
+        imgsz=1280,
         batch=8,
         name='yolov8n_avian_blood_seg_augmented', # Nome della cartella per i risultati
         # Parametri di Data Augmentation
