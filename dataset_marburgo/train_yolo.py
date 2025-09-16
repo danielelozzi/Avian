@@ -40,13 +40,13 @@ def train_model():
         data='avian_blood_cells.yaml',
         device=device,
         epochs=100,
-        imgsz=1280,
+        imgsz=1000,
         batch=8,
         name='yolov8n_avian_blood_seg_augmented', # Nome della cartella per i risultati
         # Parametri di Data Augmentation
         degrees=25.0,  # Rotazione immagine (+/- gradi)
         translate=0.1, # Traslazione immagine (+/- frazione)
-        scale=0.5,     # Ridimensionamento immagine (+/- gain)
+        scale=0.1,     # Ridimensionamento immagine (+/- gain)
         shear=2.0,     # Shear dell'immagine (+/- gradi)
         perspective=0.0005, # Prospettiva dell'immagine
         flipud=0.5,    # Probabilità di flip verticale
