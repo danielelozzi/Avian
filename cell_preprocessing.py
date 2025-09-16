@@ -26,16 +26,12 @@ def create_circular_mask(h, w, center=None, radius=None):
 
 
 def preprocess_image(image_array: np.ndarray, enhance_contrast: bool = False, isolate_and_crop: bool = False,
-                     do_histogram_matching: bool = False, reference_image: np.ndarray = None,
-                     input_magnification: float = 200.0, training_magnification: float = 200.0,
-                     tile_size: int = 640, overlap: int = 100
+                     do_histogram_matching: bool = False, reference_image: np.ndarray = None
                      ) -> dict:
     """Pipeline di preprocessing su un'immagine.
 
     Restituisce un dizionario contenente le immagini processate e i parametri
-    necessari per aggiornare eventuali annotazioni (es. bounding box, maschere).
-
-    Esempio di utilizzo per scalare bounding box dopo la chiamata:
+    necessari per aggiornare eventuali annotazioni.
     """
     original_shape = image_array.shape[:2]
     processed_image = image_array.copy()
@@ -104,52 +100,8 @@ def preprocess_image(image_array: np.ndarray, enhance_contrast: bool = False, is
     
     processed_image = images_to_process[0]
 
-    # 5. Scaling e Tiling
-    scale_factor = training_magnification / input_magnification
-    processed_tiles, tile_coords = scale_and_tile_image(
-        processed_image, scale_factor, tile_size, overlap
-    )
-
     return {
-        "processed_tiles": processed_tiles,
-        "tile_coords": tile_coords,
+        "processed_image": processed_image,
         "original_processed_image": original_processed_image,
-        "scale_factor": scale_factor,
         "original_shape": original_shape
     }
-
-
-def scale_and_tile_image(image: np.ndarray, scale_factor: float, tile_size: int, overlap: int) -> (list, list):
-    """
-    Ridimensiona un'immagine e la suddivide in tasselli sovrapposti.
-    """
-    if scale_factor != 1.0:
-        h, w = image.shape[:2]
-        new_h, new_w = int(h * scale_factor), int(w * scale_factor)
-        interpolation = cv2.INTER_AREA if scale_factor < 1.0 else cv2.INTER_LANCZOS4
-        scaled_image = cv2.resize(image, (new_w, new_h), interpolation=interpolation)
-    else:
-        scaled_image = image
-
-    h, w = scaled_image.shape[:2]
-    step = tile_size - overlap
-    tiles = []
-    coords = []
-
-    for y in range(0, h, step):
-        for x in range(0, w, step):
-            y1, x1 = y, x
-            y2, x2 = min(y + tile_size, h), min(x + tile_size, w)
-            
-            tile = scaled_image[y1:y2, x1:x2]
-            
-            # Se il tassello è più piccolo della dimensione minima, lo si padda
-            if tile.shape[0] < tile_size or tile.shape[1] < tile_size:
-                padded_tile = np.zeros((tile_size, tile_size, 3), dtype=np.uint8)
-                padded_tile[0:tile.shape[0], 0:tile.shape[1]] = tile
-                tile = padded_tile
-
-            tiles.append(tile)
-            coords.append((x1, y1))
-
-    return tiles, coords

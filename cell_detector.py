@@ -48,16 +48,15 @@ def merge_tile_results(
     # Trova un risultato valido per ottenere i nomi delle classi
     template_result = next((res for res, _ in tile_results if res and res.boxes), None)
     if template_result is None:
-        return Results(orig_img=np.zeros((*original_shape, 3), dtype=np.uint8), path="", names={}, boxes=None, masks=None, orig_shape=original_shape)
+        return Results(orig_img=np.zeros((*original_shape, 3), dtype=np.uint8), path="", names={}, boxes=None, masks=None)
 
     # Crea un oggetto Results vuoto con le proprietà corrette
     final_result = Results(
         orig_img=np.zeros((*original_shape, 3), dtype=np.uint8),
         path="",
         names=template_result.names,
-        boxes=None,
-        masks=None,
-        orig_shape=original_shape
+        boxes=None, # Verranno aggiunti dopo
+        masks=None  # Verranno aggiunti dopo
     )
 
     for result, (x_offset, y_offset) in tile_results:

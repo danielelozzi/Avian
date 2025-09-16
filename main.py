@@ -40,7 +40,6 @@ class App(tk.Tk):
         self.font_size = tk.IntVar(value=12)  # Valore di default per la dimensione del font
         self.line_width = tk.IntVar(value=2)  # Valore di default per lo spessore della linea
         self.do_histogram_matching = tk.BooleanVar(value=False)
-        self.input_magnification = tk.DoubleVar(value=200.0) # Ingrandimento immagine input
 
         # --- Layout ---
         canvas = tk.Canvas(self)
@@ -76,13 +75,6 @@ class App(tk.Tk):
         
         ttk.Checkbutton(preproc_frame, text="Isola e ritaglia campione circolare", variable=self.do_isolate_and_crop).pack(anchor="w")
         ttk.Checkbutton(preproc_frame, text="Migliora contrasto", variable=self.do_enhance_contrast).pack(anchor="w")
-
-        magnification_frame = ttk.Frame(preproc_frame)
-        magnification_frame.pack(fill='x', pady=2, anchor="w")
-        ttk.Label(magnification_frame, text="Ingrandimento Immagine (es. 100, 200, 400):").pack(side="left", padx=(0, 5))
-        ttk.Spinbox(magnification_frame, from_=10.0, to=1000.0, increment=10.0, textvariable=self.input_magnification, width=7).pack(side="left")
-        ttk.Label(magnification_frame, text="x").pack(side="left")
-
 
         ttk.Checkbutton(preproc_frame, text="Histogram Matching (richiede immagine di riferimento)", variable=self.do_histogram_matching).pack(anchor="w")
 
@@ -267,7 +259,6 @@ class App(tk.Tk):
             enhance = self.do_enhance_contrast.get()
             isolate = self.do_isolate_and_crop.get()
             do_hist_match = self.do_histogram_matching.get()
-            input_mag = self.input_magnification.get()
 
             self._safe_log(f"2. Esecuzione del preprocessing...")
             self._safe_log(f"   - Isola/Ritaglia: {isolate}, Contrasto: {enhance}")
@@ -284,32 +275,22 @@ class App(tk.Tk):
             preprocessing_results = preprocess_image(
                 image_array=image_to_process,
                 enhance_contrast=enhance, isolate_and_crop=isolate,
-                do_histogram_matching=do_hist_match, reference_image=reference_image,
-                input_magnification=input_mag, training_magnification=200.0,
-                tile_size=640, overlap=100
+                do_histogram_matching=do_hist_match, reference_image=reference_image
             )
 
             # Estrae i dati dal dizionario
-            tiles = preprocessing_results["processed_tiles"]
-            tile_coords = preprocessing_results["tile_coords"]
+            image_for_prediction = preprocessing_results["processed_image"]
             original_processed_image = preprocessing_results["original_processed_image"]
-            scale_factor = preprocessing_results["scale_factor"]
-            original_shape = preprocessing_results["original_shape"]
-
-            self._safe_log(f"   -> Preprocessing completato. Immagine scalata di {scale_factor:.2f}x e divisa in {len(tiles)} tasselli.")
+            self._safe_log("   -> Preprocessing completato.")
 
             if self.do_counting.get():
                 self._safe_log("3. Esecuzione rilevamento e conteggio...")
                 conf_threshold, iou_threshold = 0.25, 0.45
                 
-                tile_results = []
-                for i, tile in enumerate(tiles):
-                    self._safe_log(f"   - Analisi tassello {i+1}/{len(tiles)}...")
-                    raw_result = self.model.predict(source=tile, conf=conf_threshold, iou=iou_threshold, save=False, verbose=False)
-                    tile_results.append((raw_result[0], tile_coords[i]))
+                raw_results = self.model.predict(source=image_for_prediction, conf=conf_threshold, iou=iou_threshold, save=False, verbose=False)
 
-                self._safe_log("   -> Unione dei risultati...")
-                results = merge_tile_results(tile_results, original_shape, scale_factor, conf_threshold=0.3, iou_threshold=0.5)
+                # Prendiamo il primo (e unico) risultato
+                results = raw_results[0] if raw_results else None
                 self._safe_log(f"   -> Rilevamento completato. Trovate {len(results.boxes) if results.boxes else 0} cellule.")
 
                 if results and results.boxes is not None and len(results.boxes) > 0:

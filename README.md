@@ -55,7 +55,7 @@ Per eseguire l'applicazione e i relativi script di addestramento, si consiglia d
     ```
 2.  **Seleziona l'Immagine di Input** tramite il pulsante "Sfoglia...".
 3.  **(Opzionale) Seleziona un Modello di IA** se vuoi usarne uno diverso da quello di default.
-4.  **Scegli le Fasi di Analisi**: Di default, è attivo solo il conteggio. Il preprocessing non è necessario con i modelli YOLO.
+4.  **Scegli le Fasi di Analisi**: Di default, è attivo solo il conteggio. 
 5.  **Specifica il Percorso di Output** per l'immagine analizzata.
 6.  **Clicca su "Avvia Analisi"** e attendi il completamento. I risultati e i log appariranno nella finestra principale.
 
