@@ -86,7 +86,6 @@ def convert_coco_to_yolo(images_info, annotations_by_image_id, cat_id_to_yolo_id
                     seg_str = " ".join(map(str, normalized_seg))
                     f.write(f"{yolo_cat_id} {seg_str}\n")
 
-# ... (il resto del file da load_and_merge_coco in poi rimane invariato) ...
 def load_and_merge_coco(base_dir):
     """Carica e unisce i file train.json e val.json."""
     all_images = []
