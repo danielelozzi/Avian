@@ -26,12 +26,18 @@ def create_circular_mask(h, w, center=None, radius=None):
 
 
 def preprocess_image(image_array: np.ndarray, enhance_contrast: bool = False, isolate_and_crop: bool = False,
-                     do_tiling: bool = False, scale_factor: int = 1, tile_size: int = 640,
                      do_histogram_matching: bool = False, reference_image: np.ndarray = None,
-                     ) -> tuple:
+                     input_magnification: float = 200.0, training_magnification: float = 200.0,
+                     tile_size: int = 640, overlap: int = 100
+                     ) -> dict:
+    """Pipeline di preprocessing su un'immagine.
+
+    Restituisce un dizionario contenente le immagini processate e i parametri
+    necessari per aggiornare eventuali annotazioni (es. bounding box, maschere).
+
+    Esempio di utilizzo per scalare bounding box dopo la chiamata:
     """
-    Pipeline di preprocessing su un'immagine.
-    """
+    original_shape = image_array.shape[:2]
     processed_image = image_array.copy()
 
     # 1. Rimuovi canale alpha se presente
@@ -68,22 +74,9 @@ def preprocess_image(image_array: np.ndarray, enhance_contrast: bool = False, is
 
     original_processed_image = processed_image.copy()
     
-    # 4. Scaling
-    if scale_factor > 1:
-        h, w = processed_image.shape[:2]
-        new_h, new_w = int(h * scale_factor), int(w * scale_factor)
-        processed_image = cv2.resize(processed_image, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
-
     images_to_process = [processed_image]
-    coords = [(0, 0)]
-
-    # 5. Tiling
-    if do_tiling and scale_factor > 1:
-        tiles_with_coords = tile_image_by_grid(processed_image, grid_size=scale_factor)
-        images_to_process = [t[0] for t in tiles_with_coords]
-        coords = [t[1] for t in tiles_with_coords]
-
-    # 6. Histogram Matching
+    
+    # 4. Histogram Matching
     if do_histogram_matching:
         if reference_image is not None:
             matched_images = []
@@ -109,19 +102,54 @@ def preprocess_image(image_array: np.ndarray, enhance_contrast: bool = False, is
         else:
             print("Attenzione: Histogram matching richiesto ma nessuna immagine di riferimento fornita. Passaggio saltato.")
     
-    return images_to_process, coords, original_processed_image, scale_factor
+    processed_image = images_to_process[0]
+
+    # 5. Scaling e Tiling
+    scale_factor = training_magnification / input_magnification
+    processed_tiles, tile_coords = scale_and_tile_image(
+        processed_image, scale_factor, tile_size, overlap
+    )
+
+    return {
+        "processed_tiles": processed_tiles,
+        "tile_coords": tile_coords,
+        "original_processed_image": original_processed_image,
+        "scale_factor": scale_factor,
+        "original_shape": original_shape
+    }
 
 
-def tile_image_by_grid(image: np.ndarray, grid_size: int) -> list:
+def scale_and_tile_image(image: np.ndarray, scale_factor: float, tile_size: int, overlap: int) -> (list, list):
     """
-    Suddivide un'immagine in una griglia di N x N tasselli.
+    Ridimensiona un'immagine e la suddivide in tasselli sovrapposti.
     """
-    h, w = image.shape[:2]
-    tile_h, tile_w = h // grid_size, w // grid_size
+    if scale_factor != 1.0:
+        h, w = image.shape[:2]
+        new_h, new_w = int(h * scale_factor), int(w * scale_factor)
+        interpolation = cv2.INTER_AREA if scale_factor < 1.0 else cv2.INTER_LANCZOS4
+        scaled_image = cv2.resize(image, (new_w, new_h), interpolation=interpolation)
+    else:
+        scaled_image = image
+
+    h, w = scaled_image.shape[:2]
+    step = tile_size - overlap
     tiles = []
-    for i in range(grid_size):
-        for j in range(grid_size):
-            y, x = i * tile_h, j * tile_w
-            tile = image[y:y + tile_h, x:x + tile_w]
-            tiles.append((tile, (x, y)))
-    return tiles
+    coords = []
+
+    for y in range(0, h, step):
+        for x in range(0, w, step):
+            y1, x1 = y, x
+            y2, x2 = min(y + tile_size, h), min(x + tile_size, w)
+            
+            tile = scaled_image[y1:y2, x1:x2]
+            
+            # Se il tassello è più piccolo della dimensione minima, lo si padda
+            if tile.shape[0] < tile_size or tile.shape[1] < tile_size:
+                padded_tile = np.zeros((tile_size, tile_size, 3), dtype=np.uint8)
+                padded_tile[0:tile.shape[0], 0:tile.shape[1]] = tile
+                tile = padded_tile
+
+            tiles.append(tile)
+            coords.append((x1, y1))
+
+    return tiles, coords

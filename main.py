@@ -15,6 +15,7 @@ import datetime
 from cell_preprocessing import preprocess_image
 from cell_detector import merge_tile_results
 from ultralytics.utils.plotting import Colors
+from ultralytics.engine.results import Boxes, Masks
 
 
 class App(tk.Tk):
@@ -39,8 +40,7 @@ class App(tk.Tk):
         self.font_size = tk.IntVar(value=12)  # Valore di default per la dimensione del font
         self.line_width = tk.IntVar(value=2)  # Valore di default per lo spessore della linea
         self.do_histogram_matching = tk.BooleanVar(value=False)
-        self.scale_factor = tk.IntVar(value=1)  # Nuovo fattore di scaling
-        self.do_tiling = tk.BooleanVar(value=False)
+        self.input_magnification = tk.DoubleVar(value=200.0) # Ingrandimento immagine input
 
         # --- Layout ---
         canvas = tk.Canvas(self)
@@ -76,13 +76,14 @@ class App(tk.Tk):
         
         ttk.Checkbutton(preproc_frame, text="Isola e ritaglia campione circolare", variable=self.do_isolate_and_crop).pack(anchor="w")
         ttk.Checkbutton(preproc_frame, text="Migliora contrasto", variable=self.do_enhance_contrast).pack(anchor="w")
-        
-        scale_frame = ttk.Frame(preproc_frame)
-        scale_frame.pack(fill='x', pady=(5, 0))
-        ttk.Label(scale_frame, text="Fattore di Scaling (es. 2x, 3x):").pack(side="left", padx=(0, 5))
-        ttk.Spinbox(scale_frame, from_=1, to=8, increment=1, textvariable=self.scale_factor, width=5).pack(side="left")
 
-        ttk.Checkbutton(preproc_frame, text="Suddividi in Tasselli (Tiling automatico se Scaling > 1x)", variable=self.do_tiling).pack(anchor="w", pady=(5,0))
+        magnification_frame = ttk.Frame(preproc_frame)
+        magnification_frame.pack(fill='x', pady=2, anchor="w")
+        ttk.Label(magnification_frame, text="Ingrandimento Immagine (es. 100, 200, 400):").pack(side="left", padx=(0, 5))
+        ttk.Spinbox(magnification_frame, from_=10.0, to=1000.0, increment=10.0, textvariable=self.input_magnification, width=7).pack(side="left")
+        ttk.Label(magnification_frame, text="x").pack(side="left")
+
+
         ttk.Checkbutton(preproc_frame, text="Histogram Matching (richiede immagine di riferimento)", variable=self.do_histogram_matching).pack(anchor="w")
 
         # Sezione Analisi
@@ -221,8 +222,9 @@ class App(tk.Tk):
         annotated_image = image.copy()
         boxes = self._to_numpy(results.boxes.data)
         
-        # Usa direttamente i segmenti poligonali se disponibili
-        segments = results.masks.xy if results.masks is not None else [np.array([])] * len(boxes)
+        segments = []
+        if results.masks is not None and hasattr(results.masks, 'xy'):
+            segments = results.masks.xy
         
         for i, (box, segment) in enumerate(zip(boxes, segments)):
             if segment.size == 0:
@@ -265,44 +267,50 @@ class App(tk.Tk):
             enhance = self.do_enhance_contrast.get()
             isolate = self.do_isolate_and_crop.get()
             do_hist_match = self.do_histogram_matching.get()
-            do_tile = self.do_tiling.get()
-            scale_factor_val = self.scale_factor.get()
+            input_mag = self.input_magnification.get()
 
             self._safe_log(f"2. Esecuzione del preprocessing...")
             self._safe_log(f"   - Isola/Ritaglia: {isolate}, Contrasto: {enhance}")
-            self._safe_log(f"   - Scaling: {scale_factor_val}x, Tiling: {do_tile}")
             self._safe_log(f"   - Histogram Matching: {do_hist_match}")
 
             reference_image = None
-            if do_hist_match:
+            if do_hist_match and not enhance: # Non ha senso fare entrambi
                 ref_path = filedialog.askopenfilename(title="Seleziona immagine di riferimento", filetypes=[("Image Files", "*.jpg *.jpeg *.png *.tif")])
                 if not ref_path:
                     raise ValueError("Histogram matching abilitato ma nessuna immagine fornita.")
                 reference_image = cv2.imread(ref_path)
-
-            images_for_prediction, coords, original_processed_image, scale_factor = preprocess_image(
-                image_to_process,
-                enhance_contrast=enhance,
-                isolate_and_crop=isolate,
-                do_tiling=do_tile,
-                scale_factor=scale_factor_val,
-                tile_size=640,
-                do_histogram_matching=do_hist_match,
-                reference_image=reference_image
+            
+            # Chiama la funzione di preprocessing e riceve un dizionario
+            preprocessing_results = preprocess_image(
+                image_array=image_to_process,
+                enhance_contrast=enhance, isolate_and_crop=isolate,
+                do_histogram_matching=do_hist_match, reference_image=reference_image,
+                input_magnification=input_mag, training_magnification=200.0,
+                tile_size=640, overlap=100
             )
-            self._safe_log("   -> Preprocessing completato.")
+
+            # Estrae i dati dal dizionario
+            tiles = preprocessing_results["processed_tiles"]
+            tile_coords = preprocessing_results["tile_coords"]
+            original_processed_image = preprocessing_results["original_processed_image"]
+            scale_factor = preprocessing_results["scale_factor"]
+            original_shape = preprocessing_results["original_shape"]
+
+            self._safe_log(f"   -> Preprocessing completato. Immagine scalata di {scale_factor:.2f}x e divisa in {len(tiles)} tasselli.")
 
             if self.do_counting.get():
                 self._safe_log("3. Esecuzione rilevamento e conteggio...")
                 conf_threshold, iou_threshold = 0.25, 0.45
-                raw_results = self.model.predict(source=images_for_prediction, conf=conf_threshold, iou=iou_threshold, save=False, verbose=False)
+                
+                tile_results = []
+                for i, tile in enumerate(tiles):
+                    self._safe_log(f"   - Analisi tassello {i+1}/{len(tiles)}...")
+                    raw_result = self.model.predict(source=tile, conf=conf_threshold, iou=iou_threshold, save=False, verbose=False)
+                    tile_results.append((raw_result[0], tile_coords[i]))
 
-                if do_tile and scale_factor > 1:
-                    self._safe_log("   -> Unione dei risultati dei tasselli...")
-                    results_with_coords = list(zip(raw_results, coords))
-                    results = merge_tile_results(results_with_coords, original_shape=original_processed_image.shape, scale_factor=scale_factor, conf_threshold=conf_threshold, iou_threshold=iou_threshold)
-                else:
-                    results = raw_results[0] if raw_results else None
+                self._safe_log("   -> Unione dei risultati...")
+                results = merge_tile_results(tile_results, original_shape, scale_factor, conf_threshold=0.3, iou_threshold=0.5)
+                self._safe_log(f"   -> Rilevamento completato. Trovate {len(results.boxes) if results.boxes else 0} cellule.")
 
                 if results and results.boxes is not None and len(results.boxes) > 0:
                     annotated_image_bgr = self._draw_annotations(original_processed_image, results, self.model.names, self.line_width.get(), self.font_size.get())
