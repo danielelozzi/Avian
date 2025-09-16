@@ -8,6 +8,4 @@ efficientNet_B0.onnx
 /avian_yolo_dataset/images
 /avian_yolo_dataset/labels
 *.pyc
-/dataset_marburgo/runs
-/dataset_marburgo/runs
 .DS_Store
